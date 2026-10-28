@@ -13,9 +13,10 @@ local StatsService = game:GetService("Stats")
 
 local LocalPlayer = Players.LocalPlayer
 
-local LIBRARY_URL = "https://raw.githubusercontent.com/YienYun/N3-Project/refs/heads/arena/c5a10c06-n3-project/Library/N3V3-NoObfus.lua"
-local MANAGER_REPO = "https://raw.githubusercontent.com/LuxyG15/N3-Hub/refs/heads/main/Manager/"
-local FPS_MANAGER_URL = "https://raw.githubusercontent.com/ZedFu3/N3-Hub/refs/heads/main/Manager/FpsManager.luau"
+local REPO_RAW = "https://raw.githubusercontent.com/YienYun/Onium/refs/heads/arena/476c38f4-onium/"
+local LIBRARY_URL = REPO_RAW .. "Library/OniumV4.luau"
+local MANAGER_REPO = REPO_RAW .. "Manager/"
+local FPS_MANAGER_URL = MANAGER_REPO .. "FpsManger.luau"
 
 local Hub = {
 	Alive = true,
@@ -11959,8 +11960,8 @@ end
 -- 6. N3 HUB MODULAR UI BUILDER, TABS & LIFECYCLE
 -- ============================================================================
 
-local SaveManager = loadstring(game:HttpGet(MANAGER_REPO .. "SaveManager.lua"))()
-local ThemeManager = loadstring(game:HttpGet(MANAGER_REPO .. "ThemeManager.lua"))()
+local SaveManager = loadstring(game:HttpGet(MANAGER_REPO .. "SaveManager.luau"))()
+local ThemeManager = loadstring(game:HttpGet(MANAGER_REPO .. "ThemeManger.luau"))()
 local FpsManager = nil
 pcall(function()
 	local rawFpsSrc = game:HttpGet(FPS_MANAGER_URL)

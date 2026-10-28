@@ -105,6 +105,26 @@ Untuk debug di executor, state yang sama juga tersedia di `getgenv().N3Hub_State
 
 Setiap groupbox dibangun lewat satu fungsi `Hub.Features.Build*(group)`. Nama tombol mengikuti pola `Build + Nama Groupbox`, jadi wiring di bagian 6 tinggal satu baris per fitur.
 
+### Sumber yang Di-fetch
+
+Semua dependensi runtime diambil dari repo ini sendiri, lewat satu konstanta di baris 16:
+
+```lua
+local REPO_RAW = "https://raw.githubusercontent.com/YienYun/Onium/refs/heads/<branch>/"
+local LIBRARY_URL = REPO_RAW .. "Library/OniumV4.luau"
+local MANAGER_REPO = REPO_RAW .. "Manager/"
+local FPS_MANAGER_URL = MANAGER_REPO .. "FpsManger.luau"
+```
+
+| Pemakai | File |
+| --- | --- |
+| `LibraryLoader` | `Library/OniumV4.luau` |
+| `SaveManager` | `Manager/SaveManager.luau` |
+| `ThemeManager` | `Manager/ThemeManger.luau` |
+| `FpsManager` | `Manager/FpsManger.luau` |
+
+Ganti branch cukup di `REPO_RAW`; ganti nama file cukup di konstantanya masing-masing. Nama file di URL harus sama persis dengan nama file di repo (termasuk `FpsManger`/`ThemeManger`).
+
 ### Alur Load (loading screen)
 
 | Step | Pesan | Yang dikerjakan |
@@ -186,7 +206,7 @@ Cara pakai yang benar:
 
 Hal yang perlu keputusan sebelum lanjut:
 
-1. **Library dan Manager di-load dari URL, bukan dari repo.** `LIBRARY_URL` menunjuk ke repo `N3-Project`; `SaveManager`/`ThemeManager` diambil dari `MANAGER_REPO` (LuxyG15/N3-Hub) dan `FpsManager` dari ZedFu3/N3-Hub. Artinya mengedit `Library/OniumV4.luau` atau `Manager/*` di repo ini tidak mengubah apa yang dijalankan hub sampai file di URL ikut diperbarui, dan nama file di URL (`FpsManager.luau`) berbeda dari nama di repo (`FpsManger.luau`).
+1. **Semua dependensi di-fetch dari branch kerja, bukan dari `main`.** `REPO_RAW` menunjuk ke `refs/heads/arena/476c38f4-onium/` supaya setiap push langsung terpakai saat script dijalankan ulang. Sebelum rilis, ganti satu baris itu ke `refs/heads/main/` dan pastikan nama file di URL sudah sesuai nama final di repo.
 2. **Hierarki section 5 menyesatkan.** 5A–5Q berada di bawah judul "Normal Auto Steal", dan 5D memuat 5E–5P di dalam blok `do ... end` miliknya. Secara logika isinya sudah benar, hanya penamaan/judulnya yang membuat pembaca salah kira.
 3. **Unload handler manual.** Setiap flag di-`false`-kan satu per satu. Setiap fitur baru wajib menambah baris di sini, kalau tidak toggle bisa tertinggal menyala setelah unload.
 
