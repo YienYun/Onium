@@ -101,8 +101,7 @@ Untuk debug di executor, state yang sama juga tersedia di `getgenv().N3Hub_State
 | Event | Kiri: Pumpkin Boss, Ghost Dog & Fishing, The Hollow — Kanan: Phantom Express, Halloween Monsters |
 | Quest | Kiri: Auto Butterfly — Kanan: Shooting Star |
 | Player | Kiri: ESP — Kanan: Movement, Character |
-| Server | Kiri: Server (Auto Load Script, Hop Mode, Hop, Job ID, Join, Copy, Rejoin, Auto Rejoin) |
-| Settings | Diisi FpsManager, SaveManager, ThemeManager (tidak ada groupbox manual) |
+| Settings | Kiri: Performance (FpsManager), Server (ServerManager), Themes (ThemeManager) — Kanan: Configuration (SaveManager). Tidak ada groupbox manual di hub. |
 
 Setiap groupbox dibangun lewat satu fungsi `Hub.Features.Build*(group)`. Nama tombol mengikuti pola `Build + Nama Groupbox`, jadi wiring di bagian 6 tinggal satu baris per fitur.
 
@@ -175,7 +174,7 @@ Empat manager dimuat terpisah dari hub dan punya pola API sama: `SetLibrary(libr
 
 ### ServerManager
 
-Satu groupbox `Server` di tab Server, urutan kontrol:
+Satu groupbox `Server` di tab Settings, urutan kontrol:
 
 | # | Kontrol | Tipe | Logika |
 | --- | --- | --- | --- |
