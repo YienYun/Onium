@@ -2,6 +2,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
+local HttpService = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -392,6 +393,7 @@ local function ReadEntries()
 			end
 			table.insert(entries, {
 				Id = tostring(eggKey),
+				Category = tostring(eggData.AssetCategory or ""),
 				Name = assetInfo and assetInfo.Name or tostring(eggData.AssetCategory or "Egg"),
 				Rarity = assetInfo and assetInfo.Rarity or "Common",
 				RarityRank = assetInfo and assetInfo.RarityRank or 0,
@@ -1515,7 +1517,9 @@ end
 local FUSE_SLOTS = 3
 local FUSE_CARD_HEIGHT = 132
 local FUSE_ART_SIZE = 100
-local FUSE_SLOT_HEIGHT = 62
+local FUSE_SLOT_HEIGHT = 44
+local FUSE_SLOT_ART = 34
+local FUSE_SLOT_GAP = 4
 local FUSE_BAND_ROWS = 3
 local BASE_EGG_ICON = "rbxassetid://116524274262912"
 
@@ -1666,9 +1670,14 @@ local function PredictFuse(state)
 	local scales, totalScale = {}, 0
 	local mutation, mutationId = nil, nil
 	local bestMultiplier = 1
+	local earningRate = assetInfo and assetInfo.EarningRate or 0
 	for _, item in ipairs(items) do
 		table.insert(scales, item.Scale)
 		totalScale = totalScale + item.Scale
+		item.Income = earningRate > 0 and item.Scale > 0
+				and math.max(math.floor(earningRate * ScaleFactor(item.Scale) * ReadMutationMultiplier(item.Mutations) + 0.5), 1)
+			or 0
+		item.MutationText = BuildMutationText(ReadMutations(item.Mutations))
 		for _, rawMutation in ipairs(item.Mutations) do
 			local multiplier = ReadMutationMultiplier({ rawMutation })
 			if multiplier > bestMultiplier then
@@ -1922,7 +1931,9 @@ local function CreateFusePreview(parent, theme)
 
 			predictionChip.Visible = isFusing
 			eggImage.Image = assetInfo and assetInfo.EggIcon ~= "" and assetInfo.EggIcon or BASE_EGG_ICON
-			eggImage.Size = isFusing and UDim2.fromScale(0.82, 0.82) or UDim2.fromScale(0.66, 0.66)
+			eggImage.Size = assetInfo and UDim2.fromScale(0.82, 0.82) or UDim2.fromScale(0.62, 0.62)
+			eggImage.ImageTransparency = assetInfo and 0 or 0.5
+			eggShadow.Visible = assetInfo ~= nil
 
 			if assetInfo then
 				PaintGradient(art, "RarityPaint", BuildArtSequence(assetInfo), 90)
@@ -1969,129 +1980,233 @@ local function CreateFuseSlots(parent, theme)
 		Name = "FuseSlots",
 		BackgroundTransparency = 1,
 		LayoutOrder = 2,
-		Size = UDim2.new(1, -CONTAINER_PADDING * 2 - CARD_MARGIN * 2, 0, FUSE_SLOT_HEIGHT),
+		Size = UDim2.new(1, -CONTAINER_PADDING * 2 - CARD_MARGIN * 2, 0, 0),
 		Parent = parent,
 	}, {
-		New("UIGridLayout", {
-			CellSize = UDim2.new(1 / 3, -4, 0, FUSE_SLOT_HEIGHT - CARD_MARGIN * 2),
-			CellPadding = UDim2.fromOffset(4, 0),
+		New("UIListLayout", {
 			SortOrder = Enum.SortOrder.LayoutOrder,
+			Padding = UDim.new(0, FUSE_SLOT_GAP),
 		}),
 	})
 
 	local cards = {}
 	for index = 1, FUSE_SLOTS do
 		local card = New("Frame", {
+			Name = string.format("FuseSlot%d", index),
 			BackgroundColor3 = theme.Surface,
 			BackgroundTransparency = 0.1,
 			BorderSizePixel = 0,
 			LayoutOrder = index,
-			Size = UDim2.fromOffset(90, FUSE_SLOT_HEIGHT - CARD_MARGIN * 2),
+			Size = UDim2.new(1, 0, 0, FUSE_SLOT_HEIGHT),
 			Parent = holder,
 		}, {
-			New("UICorner", { CornerRadius = UDim.new(0, 8) }),
-			New("UIStroke", {
-				Color = theme.Border,
-				Thickness = 1,
-				Transparency = 0.3,
-				ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-			}),
+			New("UICorner", { CornerRadius = UDim.new(0, 9) }),
 		})
 
-		New("Frame", {
+		local stroke = New("UIStroke", {
+			Color = theme.Border,
+			Thickness = 1,
+			Transparency = 0.35,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+			Parent = card,
+		})
+
+		AddShimmer(
+			New("UIStroke", {
+				Color = COLORS.Text,
+				Thickness = 1,
+				Transparency = 0.55,
+				ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+				Parent = card,
+			}),
+			index * 0.6
+		)
+
+		local art = New("Frame", {
 			BackgroundColor3 = COLORS.Track,
-			BackgroundTransparency = 0.3,
+			BackgroundTransparency = 0.25,
 			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(4, 4),
-			Size = UDim2.fromOffset(26, 26),
+			ClipsDescendants = true,
+			Position = UDim2.fromOffset(5, 5),
+			Size = UDim2.fromOffset(FUSE_SLOT_ART, FUSE_SLOT_ART),
 			Parent = card,
 		}, {
 			New("UICorner", { CornerRadius = UDim.new(0, 6) }),
 			New("ImageLabel", {
-				Name = "Icon",
 				BackgroundTransparency = 1,
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				Position = UDim2.fromScale(0.5, 0.5),
-				Size = UDim2.fromScale(0.86, 0.86),
-				Image = "",
-				ScaleType = Enum.ScaleType.Fit,
+				Image = CARD_TILE_ASSET,
+				ImageColor3 = COLORS.TileTint,
+				ImageTransparency = 0.88,
+				ScaleType = Enum.ScaleType.Tile,
+				TileSize = UDim2.fromScale(0.36, 0.44),
+				Size = UDim2.fromScale(1, 1),
 			}),
 		})
 
-		local slotLabel = CreateLabel(card, {
-			Position = UDim2.fromOffset(4, 3),
-			Size = UDim2.new(1, -8, 0, 10),
+		local petIcon = New("ImageLabel", {
+			BackgroundTransparency = 1,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromScale(0.86, 0.86),
+			Image = "",
+			ScaleType = Enum.ScaleType.Fit,
+			ZIndex = 2,
+			Parent = art,
+		})
+
+		local emptyMark = CreateLabel(art, {
+			Size = UDim2.fromScale(1, 1),
+			Text = "+",
+			TextSize = 14,
+			TextColor3 = COLORS.Border,
+			TextXAlignment = Enum.TextXAlignment.Center,
+			ZIndex = 2,
+		})
+
+		local slotTag = CreateLabel(card, {
+			Position = UDim2.new(1, -38, 0, 5),
+			Size = UDim2.fromOffset(33, 10),
 			Text = string.format("SLOT %d", index),
-			TextSize = 8,
-			TextColor3 = COLORS.Subtext,
+			TextSize = 7,
+			TextColor3 = COLORS.Hint,
 			TextXAlignment = Enum.TextXAlignment.Right,
 		})
 
 		local nameLabel = CreateLabel(card, {
-			Position = UDim2.fromOffset(33, 6),
-			Size = UDim2.new(1, -37, 0, 12),
-			TextSize = 9,
+			Position = UDim2.fromOffset(FUSE_SLOT_ART + 12, 4),
+			Size = UDim2.new(1, -(FUSE_SLOT_ART + 12 + 42), 0, 13),
+			Text = "Empty",
+			TextSize = 10,
+			TextColor3 = COLORS.Subtext,
 		})
 
-		local detailLabel = CreateLabel(card, {
-			Position = UDim2.fromOffset(4, 33),
-			Size = UDim2.new(1, -8, 0, 11),
+		local statsRow = New("Frame", {
+			BackgroundTransparency = 1,
+			Position = UDim2.fromOffset(FUSE_SLOT_ART + 12, 17),
+			Size = UDim2.new(1, -(FUSE_SLOT_ART + 12 + 8), 0, 12),
+			Parent = card,
+		}, {
+			New("UIListLayout", {
+				FillDirection = Enum.FillDirection.Horizontal,
+				VerticalAlignment = Enum.VerticalAlignment.Center,
+				SortOrder = Enum.SortOrder.LayoutOrder,
+				Padding = UDim.new(0, 6),
+			}),
+		})
+
+		local scaleLabel = CreateLabel(statsRow, {
+			AutomaticSize = Enum.AutomaticSize.X,
+			LayoutOrder = 1,
+			Size = UDim2.fromScale(0, 1),
 			TextSize = 8,
-			RichText = true,
 		})
+		PaintGradient(scaleLabel, "TextPaint", ColorSequence.new(COLORS.ScaleTop, COLORS.ScaleBottom), 90)
 
-		local incomeLabel = CreateLabel(card, {
-			Position = UDim2.fromOffset(4, 44),
-			Size = UDim2.new(1, -8, 0, 11),
+		local incomeLabel = CreateLabel(statsRow, {
+			AutomaticSize = Enum.AutomaticSize.X,
+			LayoutOrder = 2,
+			Size = UDim2.fromScale(0, 1),
 			TextSize = 8,
 		})
 		PaintGradient(incomeLabel, "TextPaint", ColorSequence.new(COLORS.IncomeTop, COLORS.IncomeBottom), 90)
 
+		local mutationLabel = CreateLabel(statsRow, {
+			AutomaticSize = Enum.AutomaticSize.X,
+			LayoutOrder = 3,
+			Size = UDim2.fromScale(0, 1),
+			TextSize = 8,
+			RichText = true,
+		})
+
+		local hintLabel = CreateLabel(card, {
+			Position = UDim2.fromOffset(FUSE_SLOT_ART + 12, 17),
+			Size = UDim2.new(1, -(FUSE_SLOT_ART + 12 + 8), 0, 12),
+			Text = "Add a pet to this slot",
+			TextSize = 8,
+			TextColor3 = COLORS.Hint,
+			TextTransparency = 0.2,
+		})
+
+		local accent = New("Frame", {
+			BackgroundColor3 = COLORS.Text,
+			BackgroundTransparency = 0.75,
+			BorderSizePixel = 0,
+			Position = UDim2.new(0, 5, 1, -3),
+			Size = UDim2.new(1, -10, 0, 2),
+			Parent = card,
+		}, {
+			New("UICorner", { CornerRadius = UDim.new(0.5, 0) }),
+		})
+
 		table.insert(cards, {
-			Frame = card,
-			Icon = card:FindFirstChild("Icon", true),
-			Slot = slotLabel,
+			Card = card,
+			Stroke = stroke,
+			Art = art,
+			Icon = petIcon,
+			EmptyMark = emptyMark,
+			SlotTag = slotTag,
 			Name = nameLabel,
-			Detail = detailLabel,
+			Stats = statsRow,
+			Scale = scaleLabel,
 			Income = incomeLabel,
+			Mutation = mutationLabel,
+			Hint = hintLabel,
+			Accent = accent,
+			AccentGradient = New("UIGradient", {
+				Color = ColorSequence.new(theme.Border, theme.Border),
+				Parent = accent,
+			}),
+			Key = nil,
 		})
 	end
+
+	holder.Size = UDim2.new(1, 0, 0, FUSE_SLOTS * FUSE_SLOT_HEIGHT + (FUSE_SLOTS - 1) * FUSE_SLOT_GAP)
 
 	return {
 		Frame = holder,
 		Update = function(prediction)
 			for index, card in ipairs(cards) do
 				local item = prediction and prediction.Items[index] or nil
-				if item then
-					local assetInfo = prediction.Asset
-					card.Icon.Image = assetInfo and assetInfo.PetIcon or ""
-					card.Name.Text = assetInfo and assetInfo.Name or item.Category
-					card.Name.TextColor3 = COLORS.Text
-					local mutationText = BuildMutationText(ReadMutations(item.Mutations))
-					card.Detail.Text = string.format(
-						'<font color="#%s">%.2fx</font>%s',
-						COLORS.ScaleTop:ToHex(),
-						item.Scale,
-						mutationText ~= "" and ("  " .. mutationText) or ""
-					)
-					local income = 0
-					if assetInfo then
-						income = math.max(
-							math.floor(
-								assetInfo.EarningRate * ScaleFactor(item.Scale) * ReadMutationMultiplier(item.Mutations) + 0.5
-							),
-							1
-						)
+				local assetInfo = prediction and prediction.Asset or nil
+				local key = item and (item.Category .. "|" .. tostring(item.Scale) .. "|" .. tostring(#item.Mutations)) or "empty"
+				if card.Key ~= key then
+					card.Key = key
+					if item then
+						card.Icon.Image = assetInfo and assetInfo.PetIcon or ""
+						card.Icon.Visible = true
+						card.EmptyMark.Visible = false
+						card.Art.BackgroundTransparency = 1
+						card.Name.Text = assetInfo and assetInfo.Name or item.Category
+						card.Name.TextColor3 = COLORS.Text
+						card.Stats.Visible = true
+						card.Hint.Visible = false
+						card.Scale.Text = string.format("x%.2f", item.Scale)
+						card.Income.Text = FormatRate(item.Income or 0)
+						local mutationText = item.MutationText or ""
+						card.Mutation.Text = mutationText
+						card.Mutation.Visible = mutationText ~= ""
+						card.AccentGradient.Color = assetInfo and BuildArtSequence(assetInfo)
+							or ColorSequence.new(theme.Border, theme.Border)
+						card.Accent.BackgroundTransparency = 0.2
+						card.Stroke.Color = assetInfo and assetInfo.RarityColor or theme.Border
+						card.Stroke.Transparency = 0.2
+					else
+						card.Icon.Image = ""
+						card.Icon.Visible = false
+						card.EmptyMark.Visible = true
+						card.Art.BackgroundTransparency = 0.25
+						card.Name.Text = "Empty"
+						card.Name.TextColor3 = COLORS.Subtext
+						card.Stats.Visible = false
+						card.Hint.Visible = true
+						card.AccentGradient.Color = ColorSequence.new(theme.Border, theme.Border)
+						card.Accent.BackgroundTransparency = 0.75
+						card.Stroke.Color = theme.Border
+						card.Stroke.Transparency = 0.35
 					end
-					card.Income.Text = FormatRate(income)
-				else
-					card.Icon.Image = ""
-					card.Name.Text = "Empty"
-					card.Name.TextColor3 = COLORS.Subtext
-					card.Detail.Text = ""
-					card.Income.Text = ""
+				elseif item then
+					card.Income.Text = FormatRate(item.Income or 0)
 				end
-				card.Slot.Text = string.format("SLOT %d", index)
 			end
 		end,
 	}
@@ -2227,6 +2342,534 @@ function Prediction.BuildFuse(groupbox)
 	end)
 end
 
+local WEBHOOK_EVENTS = { "Egg Stolen", "Egg Fused", "Egg Ready" }
+local WEBHOOK_STORAGE = "Onium/StealAnEgg_Webhook.json"
+local WEBHOOK_POLL = 2
+local WEBHOOK_SPACING = 1.6
+local WEBHOOK_THUMBNAIL_API = "https://thumbnails.roblox.com/v1/assets?assetIds=%s&size=420x420&format=Png"
+
+local Webhook = {
+	Url = "",
+	PingEveryone = false,
+	Events = { ["Egg Stolen"] = true, ["Egg Fused"] = true, ["Egg Ready"] = true },
+	MinRarity = 0,
+	MinValue = 0,
+	EggFilter = {},
+	Queue = {},
+	Sending = false,
+	Sent = {},
+	InventorySeen = nil,
+	PenStatus = {},
+	LastFuseAt = 0,
+	LastFuseCategory = nil,
+	LastFuseScale = 1,
+	ThumbnailCache = {},
+	Connection = nil,
+	NextPollAt = 0,
+}
+
+Prediction.Webhook = Webhook
+
+local function GetHttpRequest()
+	if type(syn) == "table" and type(syn.request) == "function" then
+		return syn.request
+	end
+	if type(http) == "table" and type(http.request) == "function" then
+		return http.request
+	end
+	if type(http_request) == "function" then
+		return http_request
+	end
+	if type(request) == "function" then
+		return request
+	end
+	return nil
+end
+
+local function ReadStoredWebhook()
+	if type(readfile) ~= "function" or type(isfile) ~= "function" then
+		return nil
+	end
+	local exists = pcall(isfile, WEBHOOK_STORAGE)
+	if not exists then
+		return nil
+	end
+	local callOk, raw = pcall(readfile, WEBHOOK_STORAGE)
+	if not callOk or type(raw) ~= "string" or raw == "" then
+		return nil
+	end
+	local decodeOk, data = pcall(function()
+		return HttpService:JSONDecode(raw)
+	end)
+	if decodeOk and type(data) == "table" then
+		return data
+	end
+	return nil
+end
+
+local function SaveWebhook()
+	if type(writefile) ~= "function" then
+		return
+	end
+	local payload = {
+		Url = Webhook.Url,
+		PingEveryone = Webhook.PingEveryone,
+		Events = Webhook.Events,
+		MinRarity = Webhook.MinRarity,
+		MinValue = Webhook.MinValue,
+		EggFilter = Webhook.EggFilter,
+	}
+	pcall(function()
+		if type(isfolder) == "function" and type(makefolder) == "function" and not isfolder("Onium") then
+			makefolder("Onium")
+		end
+		writefile(WEBHOOK_STORAGE, HttpService:JSONEncode(payload))
+	end)
+end
+
+local function ParseAmount(rawText)
+	local text = tostring(rawText or ""):lower():gsub("[%s,$]", "")
+	local numberText, suffix = string.match(text, "^(%-?%d+%.?%d*)([kmbtq]?)$")
+	if not numberText then
+		return 0
+	end
+	local amount = tonumber(numberText) or 0
+	local multipliers = { k = 1e3, m = 1e6, b = 1e9, t = 1e12, q = 1e15 }
+	return math.max(amount * (multipliers[suffix] or 1), 0)
+end
+
+local function FormatColorInt(color)
+	local value = math.floor(color.R * 255 + 0.5) * 65536 + math.floor(color.G * 255 + 0.5) * 256
+	return value + math.floor(color.B * 255 + 0.5)
+end
+
+local function ResolveThumbnail(iconUrl)
+	local assetId = string.match(tostring(iconUrl or ""), "rbxassetid://(%d+)")
+	if not assetId then
+		return nil
+	end
+	local cached = Webhook.ThumbnailCache[assetId]
+	if cached ~= nil then
+		return cached or nil
+	end
+	Webhook.ThumbnailCache[assetId] = false
+
+	local requestFn = GetHttpRequest()
+	if not requestFn then
+		return nil
+	end
+	local callOk, response = pcall(requestFn, {
+		Url = string.format(WEBHOOK_THUMBNAIL_API, assetId),
+		Method = "GET",
+	})
+	if not callOk or type(response) ~= "table" or type(response.Body) ~= "string" then
+		return nil
+	end
+	local decodeOk, data = pcall(function()
+		return HttpService:JSONDecode(response.Body)
+	end)
+	local first = decodeOk and type(data) == "table" and type(data.data) == "table" and data.data[1] or nil
+	local imageUrl = type(first) == "table" and first.imageUrl or nil
+	if type(imageUrl) == "string" and imageUrl ~= "" then
+		Webhook.ThumbnailCache[assetId] = imageUrl
+		return imageUrl
+	end
+	return nil
+end
+
+local function BuildWebhookEmbed(title, payload, source)
+	local assetInfo = payload.Asset
+	local mutations = payload.Mutations or {}
+	local mutationText = BuildMutationText(mutations)
+	local thumbnail = assetInfo and ResolveThumbnail(assetInfo.EggIcon) or nil
+
+	local embed = {
+		author = {
+			name = string.format("%s  ·  Onium Hub", LocalPlayer.DisplayName or LocalPlayer.Name or "Player"),
+		},
+		title = title,
+		description = string.format(
+			"**%s**\n`%s`  ·  `%s`  ·  `%s`",
+			assetInfo and assetInfo.Name or payload.Category,
+			FormatRate(payload.Income),
+			string.upper(assetInfo and assetInfo.Rarity or "Common"),
+			string.format("%.2fx", payload.Scale)
+		),
+		color = assetInfo and FormatColorInt(assetInfo.RarityColor) or FormatColorInt(COLORS.Text),
+		fields = {
+			{ name = "Income", value = string.format("`%s`", FormatRate(payload.Income)), inline = true },
+			{ name = "Size", value = string.format("`%.2fx`", payload.Scale), inline = true },
+			{
+				name = "Weight",
+				value = payload.Weight and string.format("`%s`", FormatWeight(payload.Weight)) or "`-`",
+				inline = true,
+			},
+			{ name = "Rarity", value = string.format("`%s`", string.upper(assetInfo and assetInfo.Rarity or "Common")), inline = true },
+			{ name = "Mutation", value = mutationText ~= "" and mutationText or "`Normal`", inline = true },
+			{ name = "Source", value = string.format("`%s`", source), inline = true },
+		},
+		footer = { text = "Onium Hub  ·  Steal An Egg" },
+		timestamp = DateTime.now():ToIsoDate(),
+	}
+	if thumbnail then
+		embed.thumbnail = { url = thumbnail }
+	end
+	return embed
+end
+
+local function WebhookSending()
+	if Webhook.Sending then
+		return
+	end
+	Webhook.Sending = true
+	task.spawn(function()
+		while #Webhook.Queue > 0 do
+			local job = table.remove(Webhook.Queue, 1)
+			local requestFn = GetHttpRequest()
+			if requestFn and Webhook.Url ~= "" then
+				local body = {
+					embeds = { job.Embed },
+					allowed_mentions = { parse = { "everyone" } },
+				}
+				if Webhook.PingEveryone then
+					body.content = "@everyone"
+				end
+				pcall(function()
+					requestFn({
+						Url = Webhook.Url,
+						Method = "POST",
+						Headers = { ["Content-Type"] = "application/json" },
+						Body = HttpService:JSONEncode(body),
+					})
+				end)
+			end
+			task.wait(WEBHOOK_SPACING)
+		end
+		Webhook.Sending = false
+	end)
+end
+
+local function EnqueueEggWebhook(eventName, category, scale, mutations, source)
+	if not Webhook.Events[eventName] or Webhook.Url == "" then
+		return
+	end
+	if next(Webhook.EggFilter) ~= nil then
+		local assetInfo = ReadAssetInfo(category)
+		local name = assetInfo and assetInfo.Name or tostring(category)
+		if Webhook.EggFilter[name] ~= true then
+			return
+		end
+	end
+
+	local assetInfo = ReadAssetInfo(category)
+	if Webhook.MinRarity > 0 and (not assetInfo or assetInfo.RarityRank < Webhook.MinRarity) then
+		return
+	end
+
+	local income = 0
+	if assetInfo and assetInfo.EarningRate > 0 and scale > 0 then
+		income = math.max(
+			math.floor(assetInfo.EarningRate * ScaleFactor(scale) * ReadMutationMultiplier(mutations) + 0.5),
+			1
+		)
+	end
+	if income < Webhook.MinValue then
+		return
+	end
+
+	local payload = {
+		Category = tostring(category),
+		Asset = assetInfo,
+		Scale = scale,
+		Income = income,
+		Weight = PredictWeight(category, scale),
+		Mutations = ReadMutations(mutations),
+	}
+
+	local key = string.format("%s|%s|%.3f|%s", eventName, payload.Category, scale, table.concat(mutations or {}, ","))
+	if Webhook.Sent[key] then
+		return
+	end
+	Webhook.Sent[key] = os.clock()
+
+	task.spawn(function()
+		table.insert(Webhook.Queue, { Embed = BuildWebhookEmbed(eventName, payload, source) })
+		WebhookSending()
+	end)
+end
+
+local function PollFuseWebhook()
+	local state = ReadFuseState()
+	if state.Locked and #state.Items > 0 then
+		Webhook.LastFuseCategory = state.Items[1].Category
+		Webhook.LastFuseScale = state.Items[1].Scale
+	end
+	if state.Reward and not Webhook.RewardSeen then
+		Webhook.RewardSeen = true
+		Webhook.LastFuseAt = os.clock()
+		if Webhook.LastFuseCategory then
+			EnqueueEggWebhook(
+				"Egg Fused",
+				Webhook.LastFuseCategory,
+				Webhook.LastFuseScale,
+				{},
+				"Fuse Machine"
+			)
+		end
+	elseif not state.Reward then
+		Webhook.RewardSeen = false
+	end
+end
+
+local function PollInventoryWebhook()
+	local profile = nil
+	if type(SaveModule) == "table" and type(SaveModule.Peek) == "function" then
+		local callOk, peeked = pcall(SaveModule.Peek, LocalPlayer)
+		if callOk and type(peeked) == "table" then
+			profile = peeked
+		end
+	end
+	if type(profile) ~= "table" or type(profile.Inventory) ~= "table" then
+		return
+	end
+	if Webhook.InventorySeen == nil then
+		Webhook.InventorySeen = {}
+		for uid in pairs(profile.Inventory) do
+			Webhook.InventorySeen[uid] = true
+		end
+		return
+	end
+	for uid, record in pairs(profile.Inventory) do
+		if not Webhook.InventorySeen[uid] then
+			Webhook.InventorySeen[uid] = true
+			if type(record) == "table" and os.clock() - Webhook.LastFuseAt > 6 then
+				EnqueueEggWebhook(
+					"Egg Stolen",
+					record.Category,
+					tonumber(record.Scale) or 1,
+					type(record.Mutations) == "table" and record.Mutations or {},
+					"Inventory"
+				)
+			end
+		end
+	end
+end
+
+local function PollPenWebhook()
+	if not Webhook.Events["Egg Ready"] then
+		return
+	end
+	for _, entry in ipairs(ReadEntries()) do
+		local previous = Webhook.PenStatus[entry.Id]
+		Webhook.PenStatus[entry.Id] = entry.Status
+		if previous == "Growing" and entry.Status == "Ready" then
+			EnqueueEggWebhook("Egg Ready", entry.Category, entry.Scale, {}, "Pen")
+		end
+	end
+end
+
+local function PollWebhook()
+	PollFuseWebhook()
+	PollInventoryWebhook()
+	PollPenWebhook()
+	for key, sentAt in pairs(Webhook.Sent) do
+		if os.clock() - sentAt > 300 then
+			Webhook.Sent[key] = nil
+		end
+	end
+end
+
+local function ReadRarityOptions()
+	local byRank = {}
+	if type(AssetsModule) == "table" and type(AssetsModule.Directory) == "table" then
+		for _, assetInfo in pairs(AssetsModule.Directory) do
+			local rarity = type(assetInfo) == "table" and type(assetInfo.Rarity) == "table" and assetInfo.Rarity or nil
+			if rarity then
+				local rank = tonumber(rarity.RarityNumber or rarity.Rank)
+				local name = tostring(rarity.DisplayName or rarity._id or "")
+				if rank and name ~= "" and byRank[rank] == nil then
+					byRank[rank] = name
+				end
+			end
+		end
+	end
+
+	local ranks = {}
+	for rank in pairs(byRank) do
+		table.insert(ranks, rank)
+	end
+	table.sort(ranks)
+
+	local values, rankByName = { "All" }, { All = 0 }
+	for _, rank in ipairs(ranks) do
+		local name = byRank[rank]
+		table.insert(values, name)
+		rankByName[name] = rank
+	end
+	return values, rankByName
+end
+
+local function ReadEggOptions()
+	local options = {}
+	if type(AssetsModule) == "table" and type(AssetsModule.Directory) == "table" then
+		for category, assetInfo in pairs(AssetsModule.Directory) do
+			if type(assetInfo) == "table" then
+				local rarity = type(assetInfo.Rarity) == "table" and assetInfo.Rarity or {}
+				table.insert(options, {
+					Name = tostring(assetInfo.DisplayName or category),
+					Rank = tonumber(rarity.RarityNumber or rarity.Rank) or 0,
+				})
+			end
+		end
+	end
+	table.sort(options, function(left, right)
+		if left.Rank ~= right.Rank then
+			return left.Rank > right.Rank
+		end
+		return left.Name < right.Name
+	end)
+
+	local names, seen = {}, {}
+	for _, option in ipairs(options) do
+		if not seen[option.Name] then
+			seen[option.Name] = true
+			table.insert(names, option.Name)
+		end
+	end
+	return names
+end
+
+function Prediction.BuildWebhook(groupbox)
+	local stored = ReadStoredWebhook()
+	if type(stored) == "table" then
+		Webhook.Url = type(stored.Url) == "string" and stored.Url or ""
+		Webhook.PingEveryone = stored.PingEveryone == true
+		Webhook.MinRarity = tonumber(stored.MinRarity) or 0
+		Webhook.MinValue = tonumber(stored.MinValue) or 0
+		if type(stored.Events) == "table" then
+			for _, eventName in ipairs(WEBHOOK_EVENTS) do
+				Webhook.Events[eventName] = stored.Events[eventName] == true
+			end
+		end
+		if type(stored.EggFilter) == "table" then
+			Webhook.EggFilter = stored.EggFilter
+		end
+	end
+
+	local rarityValues, rarityRanks = ReadRarityOptions()
+	local rarityDefault = "All"
+	for _, rarityName in ipairs(rarityValues) do
+		if rarityRanks[rarityName] == Webhook.MinRarity and Webhook.MinRarity > 0 then
+			rarityDefault = rarityName
+		end
+	end
+
+	local selectedEvents = {}
+	for _, eventName in ipairs(WEBHOOK_EVENTS) do
+		if Webhook.Events[eventName] then
+			table.insert(selectedEvents, eventName)
+		end
+	end
+
+	groupbox:AddInput("Input_Webhook_Url", {
+		Text = "Webhook URL",
+		Placeholder = "https://discord.com/api/webhooks/...",
+		Default = Webhook.Url,
+		Finished = true,
+		ClearTextOnFocus = false,
+		Tooltip = "Discord webhook that receives the egg embed",
+		Callback = function(value)
+			Webhook.Url = tostring(value or "")
+			SaveWebhook()
+		end,
+	})
+
+	groupbox:AddToggle("Toggle_Webhook_Ping", {
+		Text = "Ping @Everyone",
+		Default = Webhook.PingEveryone,
+		Tooltip = "Adds @everyone in front of the embed",
+		Callback = function(isEnabled)
+			Webhook.PingEveryone = isEnabled == true
+			SaveWebhook()
+		end,
+	})
+
+	groupbox:AddDropdown("Dropdown_Webhook_NotifyOn", {
+		Text = "Notify On",
+		Values = WEBHOOK_EVENTS,
+		Multi = true,
+		Default = selectedEvents,
+		Tooltip = "Which events post to the webhook",
+		Callback = function(selected)
+			for _, eventName in ipairs(WEBHOOK_EVENTS) do
+				Webhook.Events[eventName] = false
+			end
+			for _, eventName in ipairs(selected or {}) do
+				Webhook.Events[eventName] = true
+			end
+			SaveWebhook()
+		end,
+	})
+
+	groupbox:AddDropdown("Dropdown_Webhook_MinRarity", {
+		Text = "Webhook Min Rarity",
+		Values = rarityValues,
+		Default = rarityDefault,
+		Tooltip = "Only post eggs of this rarity and above",
+		Callback = function(selected)
+			Webhook.MinRarity = rarityRanks[selected] or 0
+			SaveWebhook()
+		end,
+	})
+
+	groupbox:AddInput("Input_Webhook_MinValue", {
+		Text = "Webhook Min Value",
+		Placeholder = "0",
+		Default = Webhook.MinValue > 0 and tostring(math.floor(Webhook.MinValue)) or "",
+		Finished = true,
+		ClearTextOnFocus = false,
+		Numeric = false,
+		Tooltip = "Minimum income per second, accepts 250k, 50m, 1.5b",
+		Callback = function(value)
+			Webhook.MinValue = ParseAmount(value)
+			SaveWebhook()
+		end,
+	})
+
+	local eggValues = ReadEggOptions()
+	local selectedEggs = {}
+	for _, eggName in ipairs(eggValues) do
+		if Webhook.EggFilter[eggName] then
+			table.insert(selectedEggs, eggName)
+		end
+	end
+
+	groupbox:AddDropdown("Dropdown_Webhook_Eggs", {
+		Text = "Webhook Eggs",
+		Values = eggValues,
+		Multi = true,
+		Default = selectedEggs,
+		Tooltip = "Only post these eggs, empty means all eggs",
+		Callback = function(selected)
+			Webhook.EggFilter = {}
+			for _, eggName in ipairs(selected or {}) do
+				Webhook.EggFilter[eggName] = true
+			end
+			SaveWebhook()
+		end,
+	})
+
+	Webhook.NextPollAt = os.clock() + WEBHOOK_POLL
+	Webhook.Connection = RunService.Heartbeat:Connect(function()
+		local now = os.clock()
+		if now < Webhook.NextPollAt then
+			return
+		end
+		Webhook.NextPollAt = now + WEBHOOK_POLL
+		PollWebhook()
+	end)
+end
+
 function Prediction.Stop()
 	if Prediction.Connection then
 		Prediction.Connection:Disconnect()
@@ -2235,6 +2878,13 @@ function Prediction.Stop()
 	if Prediction.FuseConnection then
 		Prediction.FuseConnection:Disconnect()
 		Prediction.FuseConnection = nil
+	end
+	if Prediction.Webhook and Prediction.Webhook.Connection then
+		Prediction.Webhook.Connection:Disconnect()
+		Prediction.Webhook.Connection = nil
+	end
+	if Prediction.Webhook then
+		table.clear(Prediction.Webhook.Queue)
 	end
 end
 

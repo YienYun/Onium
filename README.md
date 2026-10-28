@@ -11,7 +11,7 @@ Tujuan repo: satu sumber kebenaran yang rapi, mudah dibaca, mudah dimaintain, da
 | Path | Isi | Peran |
 | --- | --- | --- |
 | `Games/Steal-An-Egg.luau` | Hub utama game (single file, ±15.100 baris) | Kode produksi. Semua fitur, engine, dan UI hub ada di sini. |
-| `Games/StealAnEgg/Prediction.luau` | Modul tab Predictor (±2240 baris) | Modul terpisah: baca egg, format uang/berat/waktu, gradient rarity, kartu preview besar, tombol status, grid kartu egg, dan fuse predictor. Dimuat hub lewat URL. |
+| `Games/StealAnEgg/Prediction.luau` | Modul tab Predictor (±2890 baris) | Modul terpisah: baca egg, format uang/berat/waktu, gradient rarity, kartu preview besar, tombol status, grid kartu egg, fuse predictor, dan Discord webhook. Dimuat hub lewat URL. |
 | `Library/OniumV4.luau` | UI library hub (turunan Obsidian, ±17.800 baris) | Komponen window, tab, groupbox, dan element. |
 | `Manager/` | `FpsManger.luau`, `SaveManager.luau`, `ThemeManger.luau`, `ServerManger.luau` | Manager UI (performance, config, theme, server). Dimuat hub lewat URL, bukan dari sini. |
 | `Source/ChiliHub.luau` | Source hasil deobfuscate (Chili Hub V3, ±53.000 baris) | **Referensi baca saja.** Bukan bahan copy-paste. |
@@ -106,7 +106,7 @@ Untuk debug di executor, state yang sama juga tersedia di `getgenv().N3Hub_State
 | Admin | Kiri: Capture The Egg, Instant Steal Abuse, Cursed Island Wars — Kanan: Admin Treadmill, Minigame Eggs |
 | Quest | Kiri: Auto Butterfly — Kanan: Shooting Star |
 | Player | Kiri: ESP — Kanan: Movement, Character |
-| Predictor | Kiri: Egg Predictor — Kanan: Fuse Predictor |
+| Predictor | Kiri: Discord Webhook, Egg Predictor — Kanan: Fuse Predictor |
 | Settings | Kiri: Performance (FpsManager), Themes (ThemeManager) — Kanan: Server (ServerManager), Configuration (SaveManager). Tidak ada groupbox manual di hub. |
 
 Setiap groupbox dibangun lewat satu fungsi `Hub.Features.Build*(group)`. Nama tombol mengikuti pola `Build + Nama Groupbox`, jadi wiring di bagian 6 tinggal satu baris per fitur.
@@ -146,7 +146,7 @@ Catatan implementasi:
 
 ### Tab Predictor
 
-Tab `Predictor` dibuat sebelum `Settings` dan seluruh logikanya ada di modul terpisah `Games/StealAnEgg/Prediction.luau` supaya file hub tidak membengkak. Hub hanya membuat tab, dua groupbox (`Egg Predictor` di kiri, `Fuse Predictor` di kanan), lalu memanggil `PredictionModule.Build(groupbox)` dan `PredictionModule.BuildFuse(groupbox)`.
+Tab `Predictor` dibuat sebelum `Settings` dan seluruh logikanya ada di modul terpisah `Games/StealAnEgg/Prediction.luau` supaya file hub tidak membengkak. Hub hanya membuat tab dan tiga groupbox (`Discord Webhook` lalu `Egg Predictor` di kiri, `Fuse Predictor` di kanan), lalu memanggil `PredictionModule.BuildWebhook`, `Build`, dan `BuildFuse`.
 
 | Kontrol | Perilaku |
 | --- | --- |
@@ -172,6 +172,27 @@ Catatan tampilan:
 - Gambar utama kartu adalah **pet** (`Assets.Directory[category].Icon`), bukan egg; gambar egg (`Egg.Icon` / `EggRecords.EggIcon`) dipakai sebagai badge bulat kecil di pojok art.
 - Mutasi dibaca dari `eggData.Mutations` lewat `Mutations.LabelOf` (label) dan `Mutations.Get().Tint` (warna), sehingga nama mutasi tidak di-hardcode; `Rainbow`/`Prismatic` diwarnai per huruf.
 
+#### Group Discord Webhook
+
+Groupbox `Discord Webhook` ada paling atas di kolom kiri dan default **collapsed**, isinya berurutan:
+
+| Kontrol | Perilaku |
+| --- | --- |
+| `Webhook URL` | Input URL webhook Discord. Disimpan ke `Onium/StealAnEgg_Webhook.json` lewat `writefile` bila executor mendukung. |
+| `Ping @Everyone` | Toggle; menambahkan `@everyone` di `content` dan `allowed_mentions.parse = {"everyone"}`. |
+| `Notify On` | Multi dropdown: `Egg Stolen`, `Egg Fused`, `Egg Ready`. |
+| `Webhook Min Rarity` | Dropdown rarity (`All` + daftar rarity dari `Assets.Directory`); hanya egg dengan rank ≥ pilihan yang dikirim. |
+| `Webhook Min Value` | Input angka, menerima `250k`, `50m`, `1.5b`; hanya egg dengan income ≥ nilai itu yang dikirim. |
+| `Webhook Eggs` | Multi dropdown semua egg (kosong = semua). |
+
+Sumber event semuanya dari state game, tanpa menebak:
+
+- `Egg Fused` — `FusionEggReward` berubah dari `false` ke `true` (egg dari mesin fuse siap diambil). Kategori & skala diambil dari `FusionSlots` terakhir yang terlihat.
+- `Egg Stolen` — ada UID baru di `Save.Peek().Inventory`; UID yang muncul ≤ 6 detik setelah fuse selesai tidak dikirim dua kali.
+- `Egg Ready` — egg di pen berubah status `Growing` → `Ready` (dari `EggState.ReadOwnerEggs` + `IsReadyToHatch`).
+
+Embed dibuat di modul: author nama pemain, judul event, deskripsi nama egg + rarity, warna embed dari `Rarity.Color`, field `Income` / `Size` / `Weight` / `Rarity` / `Mutation` / `Source`, thumbnail memakai thumbnail asset resmi (`thumbnails.roblox.com`, di-cache per asset id), footer `Onium Hub · Steal An Egg`, dan timestamp. Pengiriman memakai antrean (`Queue`) + `task.spawn` dengan jeda 1.6 detik, dan setiap kiriman dibungkus `pcall` supaya tidak pernah melempar error ke hub.
+
 #### Group Fuse Predictor
 
 Groupbox `Fuse Predictor` ada di sisi kanan tab, isinya:
@@ -179,7 +200,7 @@ Groupbox `Fuse Predictor` ada di sisi kanan tab, isinya:
 | Bagian | Perilaku |
 | --- | --- |
 | Kartu hasil | Kotak art berisi gambar egg. Saat mesin kosong atau belum 3 pet, yang tampil egg biasa dari species tersebut; saat fuse benar-benar berjalan (`FusionLocked` atau `FusionEggReward`) egg memakai gradient rarity + chip `PREDICTED`, warna mutasi prediksi, rentang income, rentang skala/berat, dan bar status (`FUSING hh mm ss` / `READY TO CLAIM`). |
-| Slot 1–3 | Tiga kartu kecil berisi pet yang sedang dimuat (`FusionSlots` → `Inventory`): ikon pet, nama, `xScale`, mutasi, dan income per slot. Slot kosong bertuliskan `Empty`. |
+| Slot 1–3 | Tiga baris kartu (bukan kolom, supaya teks tidak bertabrakan): art pet 34px dengan tile, label `SLOT n`, nama, `xScale` + income + mutasi sebaris, plus garis aksen gradient rarity di bawah. Slot kosong memakai art bergaris `+`, nama `Empty`, dan hint `Add a pet to this slot`. |
 | Predicted Size | Tiga band skala paling mungkin: rentang skala, peluang (%), dan rentang berat Kg. Bila pet belum 3, baris diganti hint berapa pet lagi yang harus dimuat. |
 | Fuse Cost | Biaya fuse dari `FuseKernel.PriceFor`, diformat `$1.20M`. |
 
