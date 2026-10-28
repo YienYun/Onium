@@ -499,9 +499,9 @@ local function ReadTheme(groupbox)
 		end
 	end
 	return {
-		Surface = surface:Lerp(Color3.new(0, 0, 0), 0.2),
+		Surface = surface:Lerp(Color3.new(1, 1, 1), 0.06),
 		Border = border,
-		Raised = surface:Lerp(Color3.new(1, 1, 1), 0.08),
+		Hover = border:Lerp(Color3.new(1, 1, 1), 0.45),
 		Outline = border:Lerp(Color3.new(1, 1, 1), 0.2),
 	}
 end
@@ -868,7 +868,7 @@ local function CreateCard(parent, entry, metrics, index, theme)
 	})
 
 	button.MouseEnter:Connect(function()
-		baseStroke.Color = theme.Outline
+		baseStroke.Color = theme.Hover
 		baseStroke.Transparency = 0
 	end)
 
@@ -1127,7 +1127,7 @@ local function CreateFilterBar(parent, theme)
 			Position = UDim2.fromOffset(2, 0),
 			Size = UDim2.new(1, -4, 1, 0),
 			Text = filter.Title,
-			TextColor3 = theme.Outline,
+			TextColor3 = COLORS.Subtext,
 			TextScaled = true,
 			Parent = button,
 		}, {
@@ -1160,7 +1160,7 @@ function Prediction.SetFilterActive()
 		filter.Gradient.Enabled = isActive
 		filter.Button.BackgroundColor3 = isActive and COLORS.Text or theme.Surface
 		filter.Button.BackgroundTransparency = isActive and 0 or 0.15
-		filter.Label.TextColor3 = isActive and Color3.new(0, 0, 0) or theme.Outline
+		filter.Label.TextColor3 = isActive and Color3.new(0, 0, 0) or COLORS.Subtext
 		filter.Stroke.Color = isActive and Color3.new(0, 0, 0) or theme.Border
 		filter.Stroke.Transparency = isActive and 0.35 or 0.25
 	end
