@@ -182,71 +182,122 @@ local function readBytes(url, depth)
 	return nil, describe(body)
 end
 
+local function tryThumbnail(host, assetId, size)
+	local url = string.format(
+		"https://%s/v1/assets?assetIds=%s&returnPolicy=PlaceHolder&size=%s&format=Png&isCircular=false",
+		host,
+		assetId,
+		size
+	)
+	log(string.format("  GET %s", url))
+	local imageUrl, reason = readThumbnailJson(url)
+	if not imageUrl then
+		return nil, reason
+	end
+	return "url", imageUrl, string.format("%s %s", host, size)
+end
+
+local function tryBytes(url, label)
+	log(string.format("  GET %s", url))
+	local body, reason = readBytes(url)
+	if not body then
+		return nil, reason
+	end
+	if not (isPng(body) or isJpeg(body)) then
+		return nil, "bukan gambar · " .. describe(body)
+	end
+	return "bytes", body, label
+end
+
+local function resolveDecalId(assetId)
+	local url = string.format("https://www.roproxy.com/asset/?id=%s", assetId)
+	log(string.format("  GET %s", url))
+	local response = call({ Url = url, Method = "GET" })
+	if not response then
+		return nil, "request gagal"
+	end
+	local status = statusOf(response)
+	if status ~= 200 then
+		return nil, "HTTP " .. tostring(status)
+	end
+	local body = tostring(response.Body)
+	for found in string.gmatch(body, "roblox%.com/asset/%?id=(%d+)") do
+		if found ~= assetId then
+			return found
+		end
+	end
+	for found in string.gmatch(body, "rbxassetid://(%d+)") do
+		if found ~= assetId then
+			return found
+		end
+	end
+	return nil, "tidak ada id turunan · " .. describe(body)
+end
+
 local VARIANTS = {
 	{
 		Label = "A",
-		Method = "thumbnails.roblox.com",
+		Method = "thumbnails.roblox.com 420",
 		Run = function(assetId)
-			local imageUrl, reason = readThumbnailJson(string.format(THUMBNAIL_API, "thumbnails.roblox.com", assetId))
-			if not imageUrl then
-				return nil, reason
-			end
-			return "url", imageUrl, "url cdn dari api resmi"
+			return tryThumbnail("thumbnails.roblox.com", assetId, "420x420")
 		end,
 	},
 	{
 		Label = "B",
-		Method = "thumbnails.roproxy.com",
+		Method = "thumbnails.roproxy.com 420",
 		Run = function(assetId)
-			local imageUrl, reason = readThumbnailJson(string.format(THUMBNAIL_API, "thumbnails.roproxy.com", assetId))
-			if not imageUrl then
-				return nil, reason
-			end
-			return "url", imageUrl, "url cdn lewat proxy roproxy"
+			return tryThumbnail("thumbnails.roproxy.com", assetId, "420x420")
 		end,
 	},
 	{
 		Label = "C",
 		Method = "assetdelivery.roproxy.com",
 		Run = function(assetId)
-			local body, reason = readBytes(string.format(ASSET_DELIVERY_V1, "assetdelivery.roproxy.com", assetId))
-			if not body then
-				return nil, reason
-			end
-			return "bytes", body, "byte asli lewat proxy roproxy"
+			return tryBytes(string.format(ASSET_DELIVERY_V1, "assetdelivery.roproxy.com", assetId), "byte lewat proxy")
 		end,
 	},
 	{
 		Label = "D",
-		Method = "roproxy asset-thumbnail",
+		Method = "www.roproxy.com asset-thumbnail",
 		Run = function(assetId)
-			local body, reason = readBytes(string.format(ASSET_IMAGE_API, "www.roproxy.com", assetId))
-			if not body then
-				return nil, reason
-			end
-			return "bytes", body, "byte thumbnail lewat proxy roproxy"
+			return tryBytes(string.format(ASSET_IMAGE_API, "www.roproxy.com", assetId), "thumbnail lewat proxy")
 		end,
 	},
 	{
 		Label = "E",
-		Method = "assetdelivery.roblox.com langsung",
+		Method = "thumbnails.roproxy.com 150",
 		Run = function(assetId)
-			local body, reason = readBytes(string.format(ASSET_DELIVERY_V1, "assetdelivery.roblox.com", assetId))
-			if not body then
-				return nil, reason
-			end
-			return "bytes", body, "byte asli langsung dari roblox"
+			return tryThumbnail("thumbnails.roproxy.com", assetId, "150x150")
 		end,
 	},
 	{
 		Label = "F",
-		Method = "assetdelivery v2 + lokasi",
+		Method = "thumbnails.roblox.com 150",
 		Run = function(assetId)
-			local body, reason = readBytes(string.format(ASSET_DELIVERY_V2, "assetdelivery.roblox.com", assetId))
-			if not body then
+			return tryThumbnail("thumbnails.roblox.com", assetId, "150x150")
+		end,
+	},
+	{
+		Label = "G",
+		Method = "roproxy decal -> id turunan",
+		Run = function(assetId)
+			local decalId, reason = resolveDecalId(assetId)
+			if not decalId then
 				return nil, reason
 			end
-			return "bytes", body, "byte dari json location v2"
+			log(string.format("  id turunan ditemukan: %s", decalId))
+			local kind, value, detail = tryThumbnail("thumbnails.roproxy.com", decalId, "420x420")
+			if kind then
+				return kind, value, "decal " .. decalId
+			end
+			kind, value, detail = tryBytes(
+				string.format(ASSET_DELIVERY_V1, "assetdelivery.roproxy.com", decalId),
+				"byte decal " .. decalId
+			)
+			if kind then
+				return kind, value, detail
+			end
+			return nil, tostring(detail or reason)
 		end,
 	},
 }
@@ -322,13 +373,31 @@ local function sendVariant(url, assetId, variant, index, statusLabel)
 		author = { name = string.format("%s  ·  Onium Hub", LocalPlayer.DisplayName or LocalPlayer.Name or "Player") },
 		title = string.format("Test %s  ·  %s", variant.Label, variant.Method),
 		color = PART_COLORS[index] or PART_COLORS[1],
-		fields = {
-			{ name = "Asset", value = string.format("`%s`", assetId), inline = true },
-			{ name = "Hasil", value = kind and string.format("`%s`", detail) or string.format("`gagal · %s`", tostring(detail)), inline = true },
-		},
+		description = string.format("asset `%s`\n%s", assetId, tostring(detail)),
 		footer = { text = "Onium Hub Thumbnail Tester" },
 		timestamp = DateTime.now():ToIsoDate(),
 	}
+
+	if not kind then
+		local failedEmbed = {
+			author = { name = string.format("%s  ·  Onium Hub", LocalPlayer.DisplayName or LocalPlayer.Name or "Player") },
+			title = string.format("Test %s  ·  %s  ·  GAGAL", variant.Label, variant.Method),
+			description = string.format("`%s`", tostring(detail)),
+			color = 15158332,
+			footer = { text = "Onium Hub Thumbnail Tester" },
+			timestamp = DateTime.now():ToIsoDate(),
+		}
+		local failedError = sendJson(url, { embeds = { failedEmbed } })
+		local message = string.format("Test %s GAGAL · %s", variant.Label, tostring(detail))
+		log(message)
+		if statusLabel then
+			statusLabel.Text = message
+		end
+		if failedError then
+			log("  laporan gagal tidak terkirim: " .. tostring(failedError))
+		end
+		return false, false
+	end
 
 	local errorText
 	if kind == "url" then
@@ -345,9 +414,9 @@ local function sendVariant(url, assetId, variant, index, statusLabel)
 
 	local line
 	if errorText then
-		line = string.format("Test %s gagal · %s · %s", variant.Label, detail, errorText)
+		line = string.format("Test %s gambar siap tapi kirim gagal · %s", variant.Label, errorText)
 	else
-		line = string.format("Test %s terkirim · %s", variant.Label, kind and detail or tostring(detail))
+		line = string.format("Test %s terkirim bergambar · %s", variant.Label, tostring(detail))
 	end
 	log(line)
 	if statusLabel then
@@ -462,7 +531,7 @@ button.BorderSizePixel = 0
 button.Font = Enum.Font.GothamBold
 button.TextSize = 13
 button.TextColor3 = Color3.fromRGB(255, 255, 255)
-button.Text = "Send Test A-F"
+button.Text = "Send Test A-G"
 button.Parent = frame
 
 local buttonCorner = Instance.new("UICorner")
@@ -503,7 +572,7 @@ button.MouseButton1Click:Connect(function()
 		end
 		status.Text = string.format("Selesai · %d/%d embed berisi gambar", successCount, #VARIANTS)
 		log(string.format("selesai · %d/%d embed berisi gambar", successCount, #VARIANTS))
-		button.Text = "Send Test A-F"
+		button.Text = "Send Test A-G"
 		running = false
 	end)
 end)

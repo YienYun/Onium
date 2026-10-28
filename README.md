@@ -197,18 +197,19 @@ Embed dibuat di modul: author nama pemain (dengan avatar headshot Roblox), judul
 2. Bila API tetap tidak memberi URL, modul mengunduh **byte** gambarnya sendiri lewat `https://www.roblox.com/asset-thumbnail/image?...`, `https://assetdelivery.roblox.com/v2/assetId/<id>` (mengikuti `location` di JSON-nya), lalu `https://assetdelivery.roblox.com/v1/asset/?id=<id>`. Byte dipakai hanya kalau signature-nya PNG (`\x89PNG`) atau JPEG, lalu dikirim sebagai lampiran Discord (`multipart/form-data`, field `files[0]`) dan embed memakai `attachment://onium_pet.png` — jadi Discord tidak perlu bisa menjangkau CDN Roblox.
 3. Kalau byte pun tidak didapat, embed dikirim tanpa gambar dan masuk daftar perbaikan: dicek ulang tiap 2 detik (mundur sampai 10 detik, batas 120 detik) lalu `PATCH /webhooks/<id>/<token>/messages/<message_id>` menempelkan gambarnya ke pesan yang sudah ada. Asset yang dibalas `state Blocked` langsung dihentikan.
 
-Untuk mengecek endpoint mana yang benar-benar bekerja di executor tertentu tersedia skrip debug terpisah `Games/StealAnEgg/WebhookThumbnailTest.luau` (tidak dipanggil hub). Jalankan di executor, akan muncul window kecil berisi `Webhook URL` (otomatis terisi dari `Onium/StealAnEgg_Webhook.json` bila ada), `Asset ID` (default RazorFang), dan tombol `Send Test A-F`. Tombol itu mengirim enam embed terpisah ke webhook tersebut, masing-masing memakai cara pengambilan gambar yang berbeda:
+Untuk mengecek endpoint mana yang benar-benar bekerja di executor tertentu tersedia skrip debug terpisah `Games/StealAnEgg/WebhookThumbnailTest.luau` (tidak dipanggil hub). Jalankan di executor, akan muncul window kecil berisi `Webhook URL` (otomatis terisi dari `Onium/StealAnEgg_Webhook.json` bila ada), `Asset ID` (default RazorFang), dan tombol `Send Test A-G`. Tombol itu mengirim satu embed per cara pengambilan gambar yang berbeda:
 
 | Label | Cara | Yang diuji |
 | --- | --- | --- |
-| A | `thumbnails.roblox.com` | URL CDN resmi dari API thumbnail |
-| B | `thumbnails.roproxy.com` | API yang sama lewat proxy publik |
-| C | `assetdelivery.roproxy.com` | byte asli lewat proxy |
+| A | `thumbnails.roblox.com` 420 | API thumbnail resmi, Chili memakai ini |
+| B | `thumbnails.roproxy.com` 420 | API yang sama lewat proxy publik |
+| C | `assetdelivery.roproxy.com` | byte asli asset lewat proxy |
 | D | `www.roproxy.com/asset-thumbnail/image` | thumbnail lewat proxy |
-| E | `assetdelivery.roblox.com` | byte asli langsung |
-| F | `assetdelivery v2` | byte yang diambil dari `location` di JSON |
+| E | `thumbnails.roproxy.com` 150 | ukuran lebih kecil lewat proxy |
+| F | `thumbnails.roblox.com` 150 | ukuran lebih kecil langsung |
+| G | `www.roproxy.com/asset/?id=` | ambil XML decal, pakai id turunan untuk thumbnail/byte |
 
-Console menulis hasil tiap label (`terkirim`, `gagal · alasan`, atau `HTTP` yang dibalas Discord), dan label mana pun yang gambarnya muncul di Discord adalah cara yang layak dipakai modul utama. Skrip ini hanya alat diagnosa dan boleh dihapus setelah masalah thumbnail selesai.
+Setiap langkah HTTP dicetak ke console (`GET <url>`, status, alasan kegagalan) dan embed yang gagal berisi alasannya di deskripsi, jadi tidak ada lagi kasus "terkirim" tanpa penjelasan. Label yang gambarnya benar-benar muncul di Discord adalah cara yang layak dipakai modul utama. Skrip ini hanya alat diagnosa dan boleh dihapus setelah masalah thumbnail selesai.
 
 Pengiriman memakai `POST ...?wait=true` supaya `message.id` didapat untuk perbaikan di atas, dan bila kiriman multipart ditolak executor, embed dikirim ulang tanpa lampiran agar notifikasi tidak hilang. Semua hasil sukses di-cache per asset id sehingga egg berikutnya dari species yang sama langsung bergambar.
 
