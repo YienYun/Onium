@@ -32,8 +32,8 @@ File dieksekusi dari atas ke bawah. Urutan bagian **adalah** urutan dependensi �
 | 2. Config, State & Catalog | 287 – 1004 | `FarmConfig` (semua flag fitur), `RuntimeState`, daftar opsi dropdown, katalog dinamis (rarity, egg, zona, place, weapon, mutation) |
 | 3. Humanoid Swap & Anti-Ragdoll | 1005 – 1406 | Kontrol humanoid, swap clone, `RestoreCharacter`, guard anti-ragdoll |
 | 4. Field Egg Scanner & Flight (Engine) | 1407 – 2106 | Klaim movement, pacing, fly/`RunPace`, `CollectRawFieldEggs`, `CollectCandidates`, trace |
-| 5. Auto Steal & Fitur | 2107 – 11957 | Lihat tabel di bawah |
-| 6. UI Builder & Lifecycle | 11958 – 14035 | `Build*` untuk setiap groupbox, pembuatan tab, manager, guard loop, unload handler |
+| 5. Auto Steal & Fitur | 2107 – 12484 | Lihat tabel di bawah |
+| 6. UI Builder & Lifecycle | 12486 – 14666 | `Build*` untuk setiap groupbox, pembuatan tab, manager, guard loop, unload handler |
 
 Nomor baris di atas mengacu ke commit `b174da4` dan akan bergeser setiap kali file diedit — gunakan judul section sebagai acuan utama.
 
@@ -44,7 +44,7 @@ Nomor baris di atas mengacu ke commit `b174da4` dan akan bergeser setiap kali fi
 | 5A | 2110 – 2294 | Humanoid swap persisten + keeper health clone |
 | 5B | 2295 – 3828 | Auto steal normal: fly, drop/regrab, deposit MoveTo |
 | 5C | 3829 – 4097 | Safe zone visual (decoy + orbit camera) |
-| 5D | 4098 – 10334 | Progression + semua modul fitur di dalam blok `do ... end` (lihat 5E–5P) |
+| 5D | 4098 – 10861 | Progression + semua modul fitur di dalam blok `do ... end` (lihat 5E–5R) |
 | 5E | 4501 | Auto treadmill & auto place egg |
 | 5F | 5450 | Auto hatch & auto equip |
 | 5G | 5692 | Auto sell pets & eggs |
@@ -57,7 +57,8 @@ Nomor baris di atas mengacu ke commit `b174da4` dan akan bergeser setiap kali fi
 | 5N | 9219 | Auto wisp & banjo cricket |
 | 5O | 9633 | Shooting star |
 | 5P | 9874 | Player movement & character modifiers |
-| 5Q | 10336 – 11957 | ESP suite (egg, guard, player, slot badge) |
+| 5R | 10349 | Admin abuse: Capture The Egg, Admin Treadmill, Instant Steal, Minigame Eggs |
+| 5Q | 10863 – 12484 | ESP suite (egg, guard, player, slot badge) |
 
 Catatan struktur: pembatas scope di sini memakai `do ... end`. 5D membungkus 5E–5P dalam satu blok, 5L–5P punya blok bersarang sendiri, dan 5Q membungkus seluruh ESP. Variabel yang perlu dipakai lintas blok diekspos lewat `Hub.*`, bukan lewat variabel lokal.
 
@@ -84,6 +85,7 @@ Setiap modul fitur berpola sama: satu tabel state lokal, diakhiri satu baris `Hu
 | Wisp & banjo | `Hub.WispBanjo` | 9238 |
 | Shooting star | `Hub.ShootingStar` | 9645 |
 | Player modifiers | `Hub.PlayerModifiers` | 9889 |
+| Admin abuse | `Hub.Admin` | 10357 |
 | The hollow | `Hub.TheHollow` | 13212 |
 | ESP | `Hub.ESP` | 10359 |
 | Engine (movement/scanner) | `Hub.Engine` | 1463 |
@@ -99,11 +101,29 @@ Untuk debug di executor, state yang sama juga tersedia di `getgenv().N3Hub_State
 | Farm | Kiri: Farm Eggs — Kanan: Progression |
 | Pets | Kiri: Auto Place Egg, Auto Mutation, Auto Fuse — Kanan: Auto Hatch & Equip, Auto Sell, Favorite |
 | Event | Kiri: Pumpkin Boss, Ghost Dog & Fishing, The Hollow — Kanan: Phantom Express, Halloween Monsters |
+| Admin | Kiri: Capture The Egg, Instant Steal Abuse — Kanan: Admin Treadmill, Minigame Eggs |
 | Quest | Kiri: Auto Butterfly — Kanan: Shooting Star |
 | Player | Kiri: ESP — Kanan: Movement, Character |
 | Settings | Kiri: Performance (FpsManager), Themes (ThemeManager) — Kanan: Server (ServerManager), Configuration (SaveManager). Tidak ada groupbox manual di hub. |
 
 Setiap groupbox dibangun lewat satu fungsi `Hub.Features.Build*(group)`. Nama tombol mengikuti pola `Build + Nama Groupbox`, jadi wiring di bagian 6 tinggal satu baris per fitur.
+
+### Tab Admin
+
+Tab `Admin` dibuat setelah `Event` sehingga tampil tepat di bawahnya. Isinya empat groupbox, semuanya tanpa status label:
+
+| Groupbox | Kontrol | Perilaku |
+| --- | --- | --- |
+| Capture The Egg (kiri) | `Auto Capture Event`, `Take It From The Holder`, `Hold height`, `Keep Away Distance` | Membaca `Event_CaptureTheEggUid`, mengambil egg lewat prompt `CarryAreaEgg` (fallback `EggState.CarryFieldEgg`), lalu menahannya di titik `Areas/EggCarryBounds` (grid 50 studs, margin 40) dengan tinggi `Hold height`. Titik dipilih yang jaraknya ke pemain lain dan `Areas/GuardAreas/*/Guard` minimal `Keep Away Distance`. |
+| Admin Treadmill (kanan) | `Auto Admin Treadmill` | Menunggu `Workspace.AdminTreadmill` (Tool), mencari part belt (nama mengandung `belt`, fallback part terluas), berdiri di atasnya lalu `RF/Treadmill/AskWearStill`. |
+| Instant Steal Abuse (kiri) | `Use Instan Steal Abuse` | Teleport ke field egg terdekat di luar base, panggil carry, lalu bawa pulang ke titik drop base dan `EggState.DropFieldEgg`. |
+| Minigame Eggs (kanan) | `Auto Steal Minigame Eggs` | Memantau `Event_RedLightGreenLight` / `Event_TrexRun` beserta `<Prefix>_EggPosition` dan `<Prefix>_CarrierUserId`, lalu mengambil egg yang cocok (radius 40 studs) dari record `EggState`. |
+
+Catatan implementasi:
+
+- Keempat fitur memakai klaim movement sendiri (`capture`, `admintreadmill`, `instantsteal`, `minigame`), jadi tidak bisa mengemudi bersamaan, dan semuanya menyerah saat auto steal sedang berjalan (`IsAutoStealBusy`).
+- `Take It From The Holder` hanya mengikuti holder: game tidak menyediakan remote untuk merebut egg dari tangan, jadi pengambilan tetap menunggu egg lepas.
+- Titik drop base dipakai bersama oleh auto steal dan instant steal lewat `DELIVERY_DROP_CFRAME` di bagian 2.
 
 ### Sumber yang Di-fetch
 
@@ -258,4 +278,4 @@ Belum ada item. Fitur dikerjakan satu per satu setelah permintaan eksplisit, dic
 
 | Fitur | Sumber acuan | Status |
 | --- | --- | --- |
-| — | — | — |
+| Tab Admin (Capture The Egg, Admin Treadmill, Instant Steal, Minigame Eggs) | `Source/ChiliHub.luau` 31160–32600, `DexExploler` | Selesai, menunggu uji executor |

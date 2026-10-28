@@ -66,6 +66,10 @@ local Hub = {
 		Movement = "rbxassetid://78137530993637",
 		Character = "rbxassetid://128234882192727",
 		Settings = "rbxassetid://101403250204482",
+		Admin = "rbxassetid://106326120662451",
+		CaptureTheEgg = "rbxassetid://103094823152347",
+		InstantSteal = "rbxassetid://137134884810647",
+		MinigameEggs = "rbxassetid://124390268104324",
 	},
 	Theme = {
 		PrefixHex = "#D946EF", -- N3 HUB Purple-Pink Accent for label prefixes ("Status:", etc.)
@@ -292,6 +296,7 @@ local Remotes = {
 
 local SAFE_BASE_LINE_X = 552
 local SAFE_CORRIDOR_Z = -364
+local DELIVERY_DROP_CFRAME = CFrame.new(616.749, 71.667, -395.585)
 
 local FarmConfig = {
 	AutoStealEnabled = false,
@@ -416,6 +421,13 @@ local FarmConfig = {
 	Char_AntiTrap = true,
 	Char_InstantPrompts = true,
 	Char_Invisibility = false,
+	Admin_Capture = false,
+	Admin_CaptureTake = true,
+	Admin_CaptureHeight = 45,
+	Admin_CaptureKeepAway = 45,
+	Admin_AutoTreadmill = false,
+	Admin_InstantSteal = false,
+	Admin_MinigameEggs = false,
 }
 
 local RuntimeState = {
@@ -2303,7 +2315,7 @@ do
 	local nextTickClock, wakePending = 0, true
 
 	local safePosition = Vector3.new(544.76, 71.5, -416.48)
-	local deliveryDrop = CFrame.new(616.749, 71.667, -395.585)
+	local deliveryDrop = DELIVERY_DROP_CFRAME
 	local eggStates = (AreaEggTypesModule and AreaEggTypesModule.States)
 		or { Slot = "Slot", Dropped = "Dropped", Carried = "Carried", Claimed = "Claimed" }
 
@@ -10334,6 +10346,524 @@ do
 		end)
 	end
 
+	-- 5R. Admin Abuse (Capture The Egg, Admin Treadmill, Instant Steal & Minigame Eggs)
+	do
+		local Admin = {
+			Capture = { Status = "Off" },
+			Treadmill = { Status = "Off", Riding = false, NextMountAt = 0 },
+			Instant = { Status = "Off", CarryUid = nil },
+			Minigame = { Status = "Off" },
+		}
+		Hub.Admin = Admin
+
+		local CAPTURE_EVENT_ATTR = "Event_CaptureTheEgg"
+		local CAPTURE_GAMEPLAY_ATTR = "Event_CaptureTheEggGameplay"
+		local CAPTURE_UID_ATTR = "Event_CaptureTheEggUid"
+		local MINIGAME_EVENTS = {
+			{ Flag = "Event_RedLightGreenLight", Prefix = "RLGL", Name = "Red Light Green Light" },
+			{ Flag = "Event_TrexRun", Prefix = "TrexRun", Name = "T-Rex Run" },
+		}
+		local CAPTURE_OWNER = "capture"
+		local TREADMILL_OWNER = "admintreadmill"
+		local INSTANT_OWNER = "instantsteal"
+		local MINIGAME_OWNER = "minigame"
+		local APPROACH_SPEED = 400
+		local HOLD_SPEED = 160
+		local GRAB_DISTANCE = 14
+		local BOUNDS_MARGIN = 40
+		local BOUNDS_SPACING = 50
+
+		local function IsCaptureEventActive()
+			return Workspace:GetAttribute(CAPTURE_EVENT_ATTR) == true
+				or Workspace:GetAttribute(CAPTURE_GAMEPLAY_ATTR) == true
+		end
+
+		local function EggBottomPosition(eggRecord)
+			if type(eggRecord) ~= "table" then
+				return nil
+			end
+			local bottomCFrame = eggRecord.BottomCFrame or eggRecord.BoundsCFrame
+			return typeof(bottomCFrame) == "CFrame" and bottomCFrame.Position or nil
+		end
+
+		local function ReadEggRecord(eggUid)
+			if EggStateModule and type(EggStateModule.ReadFieldEgg) == "function" then
+				local callOk, eggRecord = pcall(EggStateModule.ReadFieldEgg, eggUid)
+				if callOk and type(eggRecord) == "table" then
+					return eggRecord
+				end
+			end
+			for _, eggRecord in ipairs(Engine.CollectRawFieldEggs()) do
+				if eggRecord.Uid == eggUid then
+					return eggRecord
+				end
+			end
+			return nil
+		end
+
+		local function IsCarriedByMe(eggUid)
+			return Engine.AutoCarry.Carrying == true and Engine.AutoCarry.CarryUid == eggUid
+		end
+
+		local function FindCarryPrompt(eggPos)
+			local bestPrompt, bestDistance = nil, GRAB_DISTANCE
+			for _, partInst in ipairs(Workspace:GetChildren()) do
+				if partInst.Name == "SmartPromptPart" and partInst:IsA("BasePart") then
+					local promptInst = partInst:FindFirstChild("CarryAreaEgg")
+					local planarDistance =
+						Vector3.new(partInst.Position.X - eggPos.X, 0, partInst.Position.Z - eggPos.Z).Magnitude
+					if promptInst and promptInst:IsA("ProximityPrompt") and planarDistance < bestDistance then
+						bestPrompt, bestDistance = promptInst, planarDistance
+					end
+				end
+			end
+			return bestPrompt
+		end
+
+		local function RequestEggCarry(eggUid, eggRecord)
+			local eggPos = EggBottomPosition(eggRecord)
+			local promptInst = eggPos and FindCarryPrompt(eggPos)
+			if promptInst then
+				Engine.FirePrompt(promptInst)
+				return true
+			end
+			if EggStateModule and type(EggStateModule.CarryFieldEgg) == "function" then
+				pcall(EggStateModule.CarryFieldEgg, eggUid)
+				return true
+			end
+			return false
+		end
+
+		local function FindNearestFreeEgg(originPos, maxDistance, fieldOnly)
+			local bestRecord, bestDistance, bestPosition = nil, maxDistance, nil
+			for _, eggRecord in ipairs(Engine.CollectRawFieldEggs()) do
+				local eggPos = EggBottomPosition(eggRecord)
+				local carrierId = tonumber(eggRecord.CarrierUserId) or 0
+				if eggPos
+					and tostring(eggRecord.State or "") ~= "Carried"
+					and carrierId <= 0
+					and (not fieldOnly or not Engine.InsideBase(eggPos))
+				then
+					local planarDistance = Vector3.new(eggPos.X - originPos.X, 0, eggPos.Z - originPos.Z).Magnitude
+					if planarDistance < bestDistance then
+						bestRecord, bestDistance, bestPosition = eggRecord, planarDistance, eggPos
+					end
+				end
+			end
+			return bestRecord, bestDistance, bestPosition
+		end
+
+		local function SnapToPosition(targetPos)
+			local rootPart = Engine.Root()
+			if not rootPart or not rootPart.Parent then
+				return false
+			end
+			pcall(function()
+				rootPart.CFrame = CFrame.new(targetPos) * rootPart.CFrame.Rotation
+				rootPart.AssemblyLinearVelocity = Vector3.zero
+				rootPart.AssemblyAngularVelocity = Vector3.zero
+			end)
+			return true
+		end
+
+		local function DriftToPoint(goalPos, speed, shouldAbort, maxSeconds)
+			local deadline = os.clock() + (maxSeconds or 3)
+			while Hub.Alive and os.clock() < deadline do
+				if shouldAbort and shouldAbort() then
+					return false
+				end
+				local rootPart = Engine.Root()
+				if not rootPart or not rootPart.Parent then
+					return false
+				end
+				local offsetVec = goalPos - rootPart.Position
+				if offsetVec.Magnitude <= 1 then
+					return true
+				end
+				local deltaTime = RunService.Heartbeat:Wait()
+				local stepVec = offsetVec.Unit * math.min(speed * deltaTime, offsetVec.Magnitude)
+				pcall(function()
+					rootPart.CFrame = CFrame.new(rootPart.Position + stepVec) * rootPart.CFrame.Rotation
+					rootPart.AssemblyLinearVelocity = Vector3.zero
+					rootPart.AssemblyAngularVelocity = Vector3.zero
+				end)
+			end
+			return false
+		end
+
+		local function CollectCarryBounds()
+			local boundsList = {}
+			local worldFolder = Workspace:FindFirstChild("World") or Workspace:FindFirstChild("__OBJECTS")
+			local areasFolder = worldFolder and worldFolder:FindFirstChild("Areas")
+			local boundsFolder = areasFolder and areasFolder:FindFirstChild("EggCarryBounds")
+			if not boundsFolder then
+				return boundsList
+			end
+			for _, boundsPart in ipairs(boundsFolder:GetChildren()) do
+				if boundsPart:IsA("BasePart")
+					and boundsPart.Name ~= "SafeZone"
+					and boundsPart.Position.Y > 0
+					and boundsPart.Size.X > 60
+					and boundsPart.Size.Z > 60
+				then
+					local halfSize = boundsPart.Size / 2
+					local minX, maxX, minZ, maxZ = math.huge, -math.huge, math.huge, -math.huge
+					for _, signX in ipairs({ -1, 1 }) do
+						for _, signZ in ipairs({ -1, 1 }) do
+							local cornerPos = boundsPart.CFrame:PointToWorldSpace(
+								Vector3.new(halfSize.X * signX, 0, halfSize.Z * signZ)
+							)
+							minX, maxX = math.min(minX, cornerPos.X), math.max(maxX, cornerPos.X)
+							minZ, maxZ = math.min(minZ, cornerPos.Z), math.max(maxZ, cornerPos.Z)
+						end
+					end
+					table.insert(boundsList, {
+						MinX = minX,
+						MaxX = maxX,
+						MinZ = minZ,
+						MaxZ = maxZ,
+						TopY = boundsPart.Position.Y + halfSize.Y,
+					})
+				end
+			end
+			return boundsList
+		end
+
+		local function CollectAvoidPositions()
+			local avoidPositions = {}
+			for _, otherPlayer in ipairs(Players:GetPlayers()) do
+				if otherPlayer ~= LocalPlayer then
+					local otherCharacter = otherPlayer.Character
+					local otherRoot = otherCharacter and otherCharacter:FindFirstChild("HumanoidRootPart")
+					local otherHumanoid = otherCharacter and otherCharacter:FindFirstChildOfClass("Humanoid")
+					if otherRoot and otherHumanoid and otherHumanoid.Health > 0 then
+						table.insert(avoidPositions, otherRoot.Position)
+					end
+				end
+			end
+			local worldFolder = Workspace:FindFirstChild("World") or Workspace:FindFirstChild("__OBJECTS")
+			local areasFolder = worldFolder and worldFolder:FindFirstChild("Areas")
+			local guardAreas = areasFolder and areasFolder:FindFirstChild("GuardAreas")
+			if guardAreas then
+				for _, guardArea in ipairs(guardAreas:GetChildren()) do
+					local guardModel = guardArea:FindFirstChild("Guard")
+					local guardRoot = guardModel and guardModel:FindFirstChild("HumanoidRootPart", true)
+					if guardRoot and guardRoot:IsA("BasePart") then
+						table.insert(avoidPositions, guardRoot.Position)
+					end
+				end
+			end
+			return avoidPositions
+		end
+
+		local function FindHoldPoint(originPos)
+			local avoidPositions = CollectAvoidPositions()
+			local bestPoint, bestCost = nil, math.huge
+			local fallbackPoint, fallbackSafety = nil, -math.huge
+			for _, bounds in ipairs(CollectCarryBounds()) do
+				local centerZ = (bounds.MinZ + bounds.MaxZ) / 2
+				local zSpread = math.min(BOUNDS_SPACING, math.max(0, (bounds.MaxZ - bounds.MinZ) / 2 - BOUNDS_MARGIN))
+				local cursorX = bounds.MinX + BOUNDS_MARGIN
+				while cursorX <= bounds.MaxX - BOUNDS_MARGIN do
+					for _, cursorZ in ipairs({ centerZ - zSpread, centerZ, centerZ + zSpread }) do
+						local candidatePos = Vector3.new(cursorX, bounds.TopY + FarmConfig.Admin_CaptureHeight, cursorZ)
+						local nearestDistance = math.huge
+						for _, avoidPos in ipairs(avoidPositions) do
+							nearestDistance = math.min(
+								nearestDistance,
+								Vector3.new(avoidPos.X - candidatePos.X, 0, avoidPos.Z - candidatePos.Z).Magnitude
+							)
+						end
+						local cost = (candidatePos - originPos).Magnitude
+						if nearestDistance >= FarmConfig.Admin_CaptureKeepAway and cost < bestCost then
+							bestPoint, bestCost = candidatePos, cost
+						end
+						if nearestDistance > fallbackSafety then
+							fallbackPoint, fallbackSafety = candidatePos, nearestDistance
+						end
+					end
+					cursorX = cursorX + BOUNDS_SPACING
+				end
+			end
+			return bestPoint or fallbackPoint
+		end
+
+		local function RunAdminFeature(state, ownerName, stepFn)
+			if not Engine.ClaimMovement(ownerName) then
+				state.Status = "Waiting for " .. tostring(Engine.Movement.Owner or "another feature") .. " to stop"
+				return true
+			end
+			pcall(stepFn)
+			Engine.ReleaseMovement(ownerName)
+			return true
+		end
+
+		local function RunCaptureStep()
+			local captureState = Admin.Capture
+			local eggUid = Workspace:GetAttribute(CAPTURE_UID_ATTR)
+			if type(eggUid) ~= "string" or eggUid == "" then
+				captureState.Status = IsCaptureEventActive() and "Event starting, waiting for the egg"
+					or "Waiting for Capture The Egg"
+				return
+			end
+			local eggRecord = ReadEggRecord(eggUid)
+			if not eggRecord then
+				captureState.Status = "Looking for the event egg"
+				return
+			end
+			local rootPart = Engine.Root()
+			if not rootPart then
+				return
+			end
+			if IsCarriedByMe(eggUid) then
+				local holdPoint = FindHoldPoint(rootPart.Position)
+					or (rootPart.Position + Vector3.new(0, FarmConfig.Admin_CaptureHeight, 0))
+				captureState.Status = "Holding the event egg"
+				DriftToPoint(holdPoint, HOLD_SPEED, function()
+					return not FarmConfig.Admin_Capture or Engine.Disposed or not IsCarriedByMe(eggUid)
+				end, 3)
+				return
+			end
+			local carrierId = tonumber(eggRecord.CarrierUserId) or 0
+			if carrierId > 0 then
+				local carrierPlayer = Players:GetPlayerByUserId(carrierId)
+				local carrierName = carrierPlayer and (carrierPlayer.DisplayName or carrierPlayer.Name) or "someone"
+				captureState.Status = carrierName .. " has the event egg, waiting"
+				local carrierRoot = carrierPlayer
+					and carrierPlayer.Character
+					and carrierPlayer.Character:FindFirstChild("HumanoidRootPart")
+				if FarmConfig.Admin_CaptureTake and carrierRoot then
+					DriftToPoint(carrierRoot.Position + Vector3.new(0, 25, 0), APPROACH_SPEED, function()
+						return not FarmConfig.Admin_Capture or Engine.Disposed
+					end, 2)
+				end
+				return
+			end
+			local eggPos = EggBottomPosition(eggRecord)
+			if not eggPos then
+				captureState.Status = "Looking for the event egg"
+				return
+			end
+			local insideBase = Engine.InsideBase(rootPart.Position)
+			if insideBase ~= Engine.InsideBase(eggPos) and insideBase then
+				if Engine.WallSealed() or Engine.IsNight() then
+					captureState.Status = "Field wall is up, waiting to go out"
+					return
+				end
+			end
+			local planarDistance = Vector3.new(eggPos.X - rootPart.Position.X, 0, eggPos.Z - rootPart.Position.Z).Magnitude
+			if planarDistance <= GRAB_DISTANCE then
+				captureState.Status = "Grabbing the event egg"
+				SnapToPosition(eggPos + Vector3.new(0, 3, 0))
+				RequestEggCarry(eggUid, eggRecord)
+				task.wait(0.35)
+				return
+			end
+			captureState.Status = string.format("Going for the event egg  %d studs", math.floor(planarDistance + 0.5))
+			DriftToPoint(eggPos + Vector3.new(0, 3, 0), APPROACH_SPEED, function()
+				return not FarmConfig.Admin_Capture or Engine.Disposed
+			end, 4)
+		end
+
+		local function FindAdminTreadmillBelt(adminTool)
+			local namedBelt, largestPart, largestArea = nil, nil, 0
+			for _, partInst in ipairs(adminTool:GetDescendants()) do
+				if partInst:IsA("BasePart") and partInst.CanCollide then
+					if not namedBelt and string.find(string.lower(partInst.Name), "belt", 1, true) then
+						namedBelt = partInst
+					end
+					local flatArea = partInst.Size.X * partInst.Size.Z
+					if flatArea > largestArea then
+						largestPart, largestArea = partInst, flatArea
+					end
+				end
+			end
+			return namedBelt or largestPart
+		end
+
+		local function RunAdminTreadmillStep()
+			local treadmillState = Admin.Treadmill
+			local adminTool = Workspace:FindFirstChild("AdminTreadmill")
+			if not adminTool then
+				treadmillState.Riding = false
+				treadmillState.Status = "Waiting for the Admin Treadmill"
+				return
+			end
+			local beltPart = FindAdminTreadmillBelt(adminTool)
+			if not beltPart then
+				treadmillState.Status = "Looking for the Admin Treadmill belt"
+				return
+			end
+			if TreadmillState.Riding then
+				ExitTreadmillBelt()
+			end
+			local standPos = beltPart.Position + Vector3.new(0, beltPart.Size.Y / 2 + 3, 0)
+			local rootPart = Engine.Root()
+			if not rootPart then
+				return
+			end
+			if (rootPart.Position - standPos).Magnitude > 6 then
+				treadmillState.Status = "Going to the Admin Treadmill"
+				DriftToPoint(standPos, APPROACH_SPEED, function()
+					return not FarmConfig.Admin_AutoTreadmill or Engine.Disposed or not adminTool.Parent
+				end, 4)
+				return
+			end
+			if os.clock() >= treadmillState.NextMountAt then
+				treadmillState.NextMountAt = os.clock() + 2.5
+				local callOk, accepted, reasonText = InvokeWearStill()
+				treadmillState.Riding = callOk and accepted ~= false
+				treadmillState.Status = treadmillState.Riding and "Running on the Admin Treadmill"
+					or ("Admin Treadmill: " .. tostring(reasonText or accepted or "no response"))
+			end
+			DriftToPoint(standPos, HOLD_SPEED, function()
+				return not FarmConfig.Admin_AutoTreadmill or Engine.Disposed
+			end, 1)
+		end
+
+		local function RunInstantStealStep()
+			local instantState = Admin.Instant
+			if Engine.AutoCarry.Carrying then
+				if Engine.AutoCarry.CarryUid ~= instantState.CarryUid then
+					instantState.Status = "Waiting for the carried egg"
+					return
+				end
+				instantState.Status = "Bringing the stolen egg home"
+				DriftToPoint(DELIVERY_DROP_CFRAME.Position + Vector3.new(0, 3, 0), APPROACH_SPEED, function()
+					return not FarmConfig.Admin_InstantSteal or not Engine.AutoCarry.Carrying
+				end, 8)
+				if Engine.AutoCarry.Carrying and EggStateModule and type(EggStateModule.DropFieldEgg) == "function" then
+					pcall(EggStateModule.DropFieldEgg, "PlayerRequest")
+					task.wait(0.4)
+				end
+				instantState.CarryUid = nil
+				instantState.Status = "Delivered the stolen egg"
+				return
+			end
+			instantState.CarryUid = nil
+			local rootPart = Engine.Root()
+			if not rootPart then
+				return
+			end
+			local eggRecord, planarDistance, eggPos = FindNearestFreeEgg(rootPart.Position, 2000, true)
+			if not eggRecord then
+				instantState.Status = "No egg to steal"
+				return
+			end
+			instantState.Status = string.format(
+				"Stealing %s  %d studs",
+				tostring(eggRecord.Category or "egg"),
+				math.floor(planarDistance + 0.5)
+			)
+			SnapToPosition(eggPos + Vector3.new(0, 3, 0))
+			task.wait(0.1)
+			instantState.CarryUid = eggRecord.Uid
+			RequestEggCarry(eggRecord.Uid, eggRecord)
+			task.wait(0.35)
+		end
+
+		local function RunMinigameStep()
+			local minigameState = Admin.Minigame
+			local activeEvent = nil
+			for _, eventDef in ipairs(MINIGAME_EVENTS) do
+				if Workspace:GetAttribute(eventDef.Flag) == true
+					or typeof(Workspace:GetAttribute(eventDef.Prefix .. "_EggPosition")) == "Vector3"
+				then
+					activeEvent = eventDef
+					break
+				end
+			end
+			if not activeEvent then
+				minigameState.Status = "Waiting for Red Light Green Light or T-Rex Run"
+				return
+			end
+			local carrierId = tonumber(Workspace:GetAttribute(activeEvent.Prefix .. "_CarrierUserId"))
+			if carrierId == LocalPlayer.UserId then
+				minigameState.Status = "Carrying the minigame egg"
+				return
+			end
+			if carrierId and carrierId > 0 then
+				minigameState.Status = "Another player has the minigame egg"
+				return
+			end
+			local eggPos = Workspace:GetAttribute(activeEvent.Prefix .. "_EggPosition")
+			if typeof(eggPos) ~= "Vector3" then
+				minigameState.Status = "Waiting for the egg to land"
+				return
+			end
+			local eggRecord, planarDistance, recordPos = FindNearestFreeEgg(eggPos, 40)
+			if not eggRecord then
+				minigameState.Status = "Egg landed, looking for it"
+				return
+			end
+			if planarDistance > GRAB_DISTANCE then
+				minigameState.Status = string.format(
+					"Going for the %s egg  %d studs",
+					activeEvent.Name,
+					math.floor(planarDistance + 0.5)
+				)
+				DriftToPoint(recordPos + Vector3.new(0, 3, 0), APPROACH_SPEED, function()
+					return not FarmConfig.Admin_MinigameEggs or Engine.Disposed
+				end, 3)
+				return
+			end
+			minigameState.Status = "Stealing the " .. activeEvent.Name .. " egg"
+			RequestEggCarry(eggRecord.Uid, eggRecord)
+			task.wait(0.35)
+		end
+
+		AddWorker(function()
+			if not FarmConfig.Admin_Capture then
+				Admin.Capture.Status = "Off"
+				return false
+			end
+			if IsStealActive() then
+				Admin.Capture.Status = "Waiting for Auto Steal to stop"
+				return false
+			end
+			return RunAdminFeature(Admin.Capture, CAPTURE_OWNER, RunCaptureStep)
+		end)
+
+		AddWorker(function()
+			if not FarmConfig.Admin_AutoTreadmill then
+				Admin.Treadmill.Status = "Off"
+				return false
+			end
+			if IsStealActive() then
+				Admin.Treadmill.Status = "Waiting for Auto Steal to stop"
+				return false
+			end
+			return RunAdminFeature(Admin.Treadmill, TREADMILL_OWNER, RunAdminTreadmillStep)
+		end)
+
+		AddWorker(function()
+			if not FarmConfig.Admin_InstantSteal then
+				Admin.Instant.Status = "Off"
+				return false
+			end
+			if IsStealActive() then
+				Admin.Instant.Status = "Waiting for Auto Steal to stop"
+				return false
+			end
+			return RunAdminFeature(Admin.Instant, INSTANT_OWNER, RunInstantStealStep)
+		end)
+
+		AddWorker(function()
+			if not FarmConfig.Admin_MinigameEggs then
+				Admin.Minigame.Status = "Off"
+				return false
+			end
+			if IsStealActive() then
+				Admin.Minigame.Status = "Waiting for Auto Steal to stop"
+				return false
+			end
+			return RunAdminFeature(Admin.Minigame, MINIGAME_OWNER, RunMinigameStep)
+		end)
+
+		function Admin.Wake()
+			Progression.Wake()
+		end
+	end
 end
 
 -- 5Q. Chilli Gradient ESP Suite (Ultra-Light Event-Driven + 1.5ms Frame-Sliced, Zero FPS Drop)
@@ -13541,6 +14071,87 @@ function Hub.Features.BuildShootingStar(starGroup)
 	end)
 end
 
+function Hub.Features.BuildCaptureTheEgg(captureGroup)
+	captureGroup:AddToggle("Toggle_Admin_CaptureEvent", {
+		Text = "Auto Capture Event",
+		Default = false,
+		Tooltip = "Automatically grabs the Capture The Egg event egg and holds it above the field",
+		Callback = function(isEnabled)
+			FarmConfig.Admin_Capture = isEnabled
+			Hub.Admin.Wake()
+		end,
+	})
+
+	captureGroup:AddToggle("Toggle_Admin_CaptureTake", {
+		Text = "Take It From The Holder",
+		Default = true,
+		Tooltip = "Follows the player holding the event egg until the egg becomes available",
+		Callback = function(isEnabled)
+			FarmConfig.Admin_CaptureTake = isEnabled
+		end,
+	})
+
+	captureGroup:AddSlider("Slider_Admin_CaptureHeight", {
+		Text = "Hold height",
+		Min = 20,
+		Max = 120,
+		Default = 45,
+		Rounding = 0,
+		Suffix = " studs",
+		Callback = function(sliderVal)
+			FarmConfig.Admin_CaptureHeight = math.clamp(ToFiniteNumber(sliderVal, 45), 20, 120)
+		end,
+	})
+
+	captureGroup:AddSlider("Slider_Admin_CaptureKeepAway", {
+		Text = "Keep Away Distance",
+		Min = 20,
+		Max = 150,
+		Default = 45,
+		Rounding = 0,
+		Suffix = " studs",
+		Callback = function(sliderVal)
+			FarmConfig.Admin_CaptureKeepAway = math.clamp(ToFiniteNumber(sliderVal, 45), 20, 150)
+		end,
+	})
+end
+
+function Hub.Features.BuildAdminTreadmill(treadmillGroup)
+	treadmillGroup:AddToggle("Toggle_Admin_AutoTreadmill", {
+		Text = "Auto Admin Treadmill",
+		Default = false,
+		Tooltip = "Rides the Admin Treadmill whenever the server spawns it",
+		Callback = function(isEnabled)
+			FarmConfig.Admin_AutoTreadmill = isEnabled
+			Hub.Admin.Wake()
+		end,
+	})
+end
+
+function Hub.Features.BuildInstantSteal(instantGroup)
+	instantGroup:AddToggle("Toggle_Admin_InstantSteal", {
+		Text = "Use Instan Steal Abuse",
+		Default = false,
+		Tooltip = "Teleports to the closest field egg, takes it and drops it inside the base",
+		Callback = function(isEnabled)
+			FarmConfig.Admin_InstantSteal = isEnabled
+			Hub.Admin.Wake()
+		end,
+	})
+end
+
+function Hub.Features.BuildMinigameEggs(minigameGroup)
+	minigameGroup:AddToggle("Toggle_Admin_MinigameEggs", {
+		Text = "Auto Steal Minigame Eggs",
+		Default = false,
+		Tooltip = "Takes the Red Light Green Light and T-Rex Run eggs",
+		Callback = function(isEnabled)
+			FarmConfig.Admin_MinigameEggs = isEnabled
+			Hub.Admin.Wake()
+		end,
+	})
+end
+
 local EspShowInfoOptions = {
 	"Icon",
 	"Name",
@@ -13847,12 +14458,14 @@ Hub.UI.Window = MainWindow
 local FarmTab = MainWindow:AddTab("Farm", Hub.Icons.Farm, "Main Farm & Lifecycle")
 local PetsTab = MainWindow:AddTab("Pets", Hub.Icons.Pets, "Pets & Egg Placement")
 local EventTab = MainWindow:AddTab("Event", Hub.Icons.Event, "Halloween & Special Events")
+local AdminTab = MainWindow:AddTab("Admin", Hub.Icons.Admin, "Capture The Egg, Admin Treadmill, Instant Steal & Minigame Eggs")
 local QuestTab = MainWindow:AddTab("Quest", Hub.Icons.Quest, "Quests, Butterfly Bloom & Shooting Star")
 local PlayerTab = MainWindow:AddTab("Player", Hub.Icons.Player, "Movement, Character, Combat & Visuals")
 local SettingsTab = MainWindow:AddTab("Settings", Hub.Icons.Settings, "System & Configuration")
 Hub.UI.Tabs.Farm = FarmTab
 Hub.UI.Tabs.Pets = PetsTab
 Hub.UI.Tabs.Event = EventTab
+Hub.UI.Tabs.Admin = AdminTab
 Hub.UI.Tabs.Quest = QuestTab
 Hub.UI.Tabs.Player = PlayerTab
 Hub.UI.Tabs.Settings = SettingsTab
@@ -13870,6 +14483,10 @@ local GhostDogFishingGroup = EventTab:AddLeftGroupbox("Ghost Dog & Fishing", Hub
 local PhantomExpressGroup = EventTab:AddRightGroupbox("Phantom Express", Hub.Icons.PhantomExpress)
 local HalloweenMonsterGroup = EventTab:AddRightGroupbox("Halloween Monsters", Hub.Icons.HalloweenMonster)
 local TheHollowGroup = EventTab:AddLeftGroupbox("The Hollow", Hub.Icons.TheHollow)
+local CaptureTheEggGroup = AdminTab:AddLeftGroupbox("Capture The Egg", Hub.Icons.CaptureTheEgg)
+local AdminTreadmillGroup = AdminTab:AddRightGroupbox("Admin Treadmill", Hub.Icons.Treadmill)
+local InstantStealGroup = AdminTab:AddLeftGroupbox("Instant Steal Abuse", Hub.Icons.InstantSteal)
+local MinigameEggsGroup = AdminTab:AddRightGroupbox("Minigame Eggs", Hub.Icons.MinigameEggs)
 local AutoButterflyGroup = QuestTab:AddLeftGroupbox("Auto Butterfly", Hub.Icons.AutoButterfly)
 local ShootingStarGroup = QuestTab:AddRightGroupbox("Shooting Star", Hub.Icons.ShootingStar)
 local PlayerEspGroup = PlayerTab:AddLeftGroupbox("ESP", Hub.Icons.ESP)
@@ -13889,6 +14506,10 @@ Hub.UI.Groups.GhostDogFishing = GhostDogFishingGroup
 Hub.UI.Groups.PhantomExpress = PhantomExpressGroup
 Hub.UI.Groups.HalloweenMonsters = HalloweenMonsterGroup
 Hub.UI.Groups.TheHollow = TheHollowGroup
+Hub.UI.Groups.CaptureTheEgg = CaptureTheEggGroup
+Hub.UI.Groups.AdminTreadmill = AdminTreadmillGroup
+Hub.UI.Groups.InstantSteal = InstantStealGroup
+Hub.UI.Groups.MinigameEggs = MinigameEggsGroup
 Hub.UI.Groups.AutoButterfly = AutoButterflyGroup
 Hub.UI.Groups.ShootingStar = ShootingStarGroup
 
@@ -13905,6 +14526,10 @@ Hub.Features.BuildGhostDogFishing(GhostDogFishingGroup)
 Hub.Features.BuildPhantomExpress(PhantomExpressGroup)
 Hub.Features.BuildHalloweenMonsters(HalloweenMonsterGroup)
 Hub.Features.BuildTheHollow(TheHollowGroup)
+Hub.Features.BuildCaptureTheEgg(CaptureTheEggGroup)
+Hub.Features.BuildAdminTreadmill(AdminTreadmillGroup)
+Hub.Features.BuildInstantSteal(InstantStealGroup)
+Hub.Features.BuildMinigameEggs(MinigameEggsGroup)
 Hub.UI.Groups.ESP = PlayerEspGroup
 Hub.UI.Groups.Movement = PlayerMoveGroup
 Hub.UI.Groups.Character = PlayerCharGroup
@@ -14010,6 +14635,11 @@ LibraryLoader:OnUnload(function()
 	FarmConfig.Move_SpeedBoost = false
 	FarmConfig.Move_InfiniteJump = false
 	FarmConfig.Char_Invisibility = false
+	FarmConfig.Admin_Capture = false
+	FarmConfig.Admin_CaptureTake = false
+	FarmConfig.Admin_AutoTreadmill = false
+	FarmConfig.Admin_InstantSteal = false
+	FarmConfig.Admin_MinigameEggs = false
 	Hub.TheHollow.Active = false
 	RuntimeState.SessionId = RuntimeState.SessionId + 1
 
