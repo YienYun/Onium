@@ -11,7 +11,7 @@ Tujuan repo: satu sumber kebenaran yang rapi, mudah dibaca, mudah dimaintain, da
 | Path | Isi | Peran |
 | --- | --- | --- |
 | `Games/Steal-An-Egg.luau` | Hub utama game (single file, ±15.100 baris) | Kode produksi. Semua fitur, engine, dan UI hub ada di sini. |
-| `Games/StealAnEgg/Prediction.luau` | Modul tab Predictor (±1200 baris) | Modul terpisah: baca egg, format uang/berat/waktu, gradient rarity, kartu preview besar, tombol status, dan grid kartu egg. Dimuat hub lewat URL. |
+| `Games/StealAnEgg/Prediction.luau` | Modul tab Predictor (±1360 baris) | Modul terpisah: baca egg, format uang/berat/waktu, gradient rarity, kartu preview besar, tombol status, dan grid kartu egg. Dimuat hub lewat URL. |
 | `Library/OniumV4.luau` | UI library hub (turunan Obsidian, ±17.800 baris) | Komponen window, tab, groupbox, dan element. |
 | `Manager/` | `FpsManger.luau`, `SaveManager.luau`, `ThemeManger.luau`, `ServerManger.luau` | Manager UI (performance, config, theme, server). Dimuat hub lewat URL, bukan dari sini. |
 | `Source/ChiliHub.luau` | Source hasil deobfuscate (Chili Hub V3, ±53.000 baris) | **Referensi baca saja.** Bukan bahan copy-paste. |
@@ -153,8 +153,8 @@ Tab `Predictor` dibuat sebelum `Settings` dan seluruh logikanya ada di modul ter
 | `Sort By` | `Value` (income per detik), `Rarity` (rank rarity), `Time Left` (sisa waktu tumbuh paling dekat). |
 | `Show Preview Card` | Menampilkan atau menyembunyikan kartu preview besar. |
 | Kartu preview | Kotak art persegi (tile + rays berputar + bayangan + `EggRecords.EggIcon`) dan kolom teks: nama, rarity, income, `xScale` + berat, bar durasi berisi sisa waktu + persen. |
-| Tombol status | `ALL`, `READY`, `GROWING`, `IN BAG` dengan jumlah egg; yang aktif berisi gradient status, sisanya gelap. |
-| Daftar egg | Grid kartu potret (otomatis 2 kolom) berisi art persegi, nama, rarity, income, `xScale` + berat, dan bar durasi; klik kartu untuk memilihnya di preview. |
+| Tombol status | `ALL`, `READY`, `GROWING`, `IN BAG` dengan jumlah egg; yang aktif berisi gradient status, sisanya mengikuti warna theme. |
+| Daftar egg | `ScrollingFrame` berisi grid kartu potret (2 kolom, 4 kartu terlihat, sisanya discroll) berisi art persegi, nama, rarity, income, `xScale` + berat, dan bar durasi; klik kartu untuk memilihnya di preview. |
 
 Sumber data semuanya dari modul game, bukan karangan: `EggState.ReadOwnerEggs` (daftar egg), `EggState.IsReadyToHatch`, `EggRecords.GrowthSecondsRemaining` / `GrowthDuration` / `GrowthSpeedMultiplier` / `WeightKg` / `EggIcon`, `Assets.Directory` (nama, rarity, `EarningRate`, icon), dan `Mutations.EarningsFor` (multiplier mutasi). Income memakai rumus Chili: `EarningRate * ScaleFactor(scale) * MutationMultiplier`.
 
@@ -165,6 +165,10 @@ Catatan tampilan:
 - Gradient nama dan rarity diambil dari instance game `ReplicatedStorage.Assets.UI.RarityGradients/<rarityId>/RarityGradient` (rotation + color sequence di-crop seperti Chili), dengan `SECRET` memakai sequence khusus dan fallback `Color:Lerp(white, 0.35)` bila gradient tidak tersedia.
 - Bar memakai pasangan warna status milik Chili (Ready `#AAFF96 -> #1ECD55`, Growing `#FFE178 -> #FF8228`, In Bag `#A0E1FF -> #3C8CFF`); angka waktu dan persen ditulis di tengah bar, persis seperti Chili.
 - Garis hitam tipis pada versi pertama berasal dari `UIStroke` bawaan `AddSpotlightCard` (judul dan rarity), bukan dari modul; element itu sudah tidak dipakai lagi.
+- Label bergradient wajib `TextColor3 = white`; warna dasar hitam membuat hasil gradient ikut gelap (bug versi kedua).
+- Lebar frame kustom memakai `UDim2.new(1, -14, ...)` karena `Groupbox.Container` punya `UIPadding` 7px di tiap sisi; memakai `(1, 0)` membuat kartu melebar keluar dan teks terpotong.
+- Warna permukaan, border, dan aksen kartu diambil dari `Groupbox.Holder` (background + `UIStroke` hasil `Library:AddOutline`) supaya mengikuti theme hub.
+- Aksen mewah memakai `SHIMMER_SEQUENCE` warna rarity Secret yang berjalan: strip 3px di tepi kiri tiap kartu, stroke kartu terpilih, dan stroke kartu preview (offset `UIGradient` dianimasikan di `Heartbeat`).
 
 ### Sumber yang Di-fetch
 
