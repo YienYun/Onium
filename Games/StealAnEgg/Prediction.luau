@@ -35,28 +35,66 @@ local Prediction = {
 	SelectedId = nil,
 	Signature = "",
 	Cards = {},
+	Filters = {},
+	Counts = {},
 	Groupbox = nil,
-	Card = nil,
+	Preview = nil,
+	ListFrame = nil,
+	Grid = nil,
+	CardWidth = 0,
 	NextRefreshAt = 0,
+	RaysAngle = 0,
+	LastFrameAt = 0,
 }
 
 local COLORS = {
 	Text = Color3.fromRGB(255, 255, 255),
-	Income = Color3.fromRGB(77, 255, 122),
-	Clock = Color3.fromRGB(255, 194, 77),
-	Ready = Color3.fromRGB(77, 255, 122),
-	Growing = Color3.fromRGB(255, 194, 77),
-	Inventory = Color3.fromRGB(127, 216, 255),
-	Weight = Color3.fromRGB(205, 231, 255),
-	CardBackground = Color3.fromRGB(18, 19, 27),
-	ProgressTrack = Color3.fromRGB(12, 13, 19),
+	Card = Color3.fromRGB(18, 18, 26),
+	Border = Color3.fromRGB(62, 64, 84),
+	Subtext = Color3.fromRGB(214, 218, 236),
+	Track = Color3.fromRGB(8, 8, 12),
+	Select = Color3.fromRGB(255, 214, 90),
+	IncomeTop = Color3.fromRGB(170, 255, 140),
+	IncomeBottom = Color3.fromRGB(40, 230, 90),
+	ScaleTop = Color3.fromRGB(255, 244, 190),
+	ScaleBottom = Color3.fromRGB(255, 196, 60),
+	WeightTop = Color3.fromRGB(235, 250, 255),
+	WeightBottom = Color3.fromRGB(110, 200, 255),
+	Ready = { Color3.fromRGB(170, 255, 150), Color3.fromRGB(30, 205, 85) },
+	Growing = { Color3.fromRGB(255, 225, 120), Color3.fromRGB(255, 130, 40) },
+	InBag = { Color3.fromRGB(160, 225, 255), Color3.fromRGB(60, 140, 255) },
+	TileTint = Color3.fromRGB(40, 40, 60),
+	ShadowTint = Color3.fromRGB(20, 18, 34),
 }
 
-local CARD_HEIGHT = 96
-local CARD_PADDING = 6
-local ART_SIZE = 84
+local FILTERS = {
+	{ Key = "All", Title = "ALL", Colors = { Color3.fromRGB(255, 255, 255), Color3.fromRGB(176, 188, 220) } },
+	{ Key = "Ready", Title = "READY", Colors = { Color3.fromRGB(170, 255, 150), Color3.fromRGB(40, 220, 90) } },
+	{ Key = "Growing", Title = "GROWING", Colors = { Color3.fromRGB(255, 232, 150), Color3.fromRGB(255, 150, 40) } },
+	{ Key = "In Bag", Title = "IN BAG", Colors = { Color3.fromRGB(180, 232, 255), Color3.fromRGB(70, 160, 255) } },
+}
+
 local CARD_TILE_ASSET = "rbxassetid://90325592797235"
+local PREVIEW_RAYS_ASSET = "rbxassetid://109516122757226"
+local PREVIEW_SHADOW_ASSET = "rbxassetid://10822615828"
+local PREVIEW_HEIGHT = 132
+local PREVIEW_ART_SIZE = 116
+local GRID_GAP = 8
 local FALLBACK_RARITY_COLOR = Color3.fromRGB(255, 255, 255)
+
+local ETERNAL_SEQUENCE = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(196, 222, 255)),
+	ColorSequenceKeypoint.new(0.45, Color3.fromRGB(246, 242, 255)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(214, 180, 255)),
+})
+
+local SECRET_SEQUENCE = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(240, 243, 250)),
+	ColorSequenceKeypoint.new(0.3, Color3.fromRGB(120, 128, 146)),
+	ColorSequenceKeypoint.new(0.52, Color3.fromRGB(30, 32, 42)),
+	ColorSequenceKeypoint.new(0.74, Color3.fromRGB(110, 118, 136)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(248, 250, 255)),
+})
 
 local function New(className, properties, children)
 	local instance = Instance.new(className)
@@ -69,27 +107,74 @@ local function New(className, properties, children)
 	return instance
 end
 
+local function LoadFontFace(assetPath, weight)
+	local callOk, fontFace = pcall(Font.new, assetPath, weight, Enum.FontStyle.Normal)
+	return callOk and fontFace or nil
+end
+
+local DISPLAY_FONT = LoadFontFace("rbxassetid://12187365977", Enum.FontWeight.Bold)
+	or LoadFontFace("rbxasset://fonts/families/FredokaOne.json", Enum.FontWeight.Regular)
+
+local function UseDisplayFont(label)
+	if DISPLAY_FONT then
+		label.FontFace = DISPLAY_FONT
+	else
+		label.Font = Enum.Font.GothamBold
+	end
+end
+
+local function CreateLabel(parent, properties)
+	local label = New("TextLabel", {
+		BackgroundTransparency = 1,
+		Text = "",
+		TextSize = 12,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Center,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Parent = parent,
+	})
+	for key, value in pairs(properties or {}) do
+		label[key] = value
+	end
+	UseDisplayFont(label)
+	return label
+end
+
 local function FormatRate(value)
-	local amount = math.max(0, math.floor(tonumber(value) or 0))
-	if amount >= 1000000000 then
+	local amount = tonumber(value) or 0
+	if amount >= 1000000000000 then
+		return string.format("%.2fT/s", amount / 1000000000000)
+	elseif amount >= 1000000000 then
 		return string.format("%.2fB/s", amount / 1000000000)
 	elseif amount >= 1000000 then
 		return string.format("%.2fM/s", amount / 1000000)
 	elseif amount >= 1000 then
 		return string.format("%.1fK/s", amount / 1000)
 	end
-	return string.format("%d/s", amount)
+	return string.format("%d/s", math.floor(amount))
 end
 
 local function FormatWeight(value)
-	local integerText = string.format("%d", math.floor(tonumber(value) or 0))
-	local grouped = integerText:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
-	return grouped .. " Kg"
+	local amount = tonumber(value) or 0
+	local formatted = amount >= 1000 and string.format("%.0f", amount) or string.format("%.2f", amount)
+	local integerPart, decimalPart = string.match(formatted, "^(%-?%d+)(%.%d+)$")
+	integerPart = integerPart or formatted
+	while true do
+		local replaced, count = string.gsub(integerPart, "^(%-?%d+)(%d%d%d)", "%1,%2")
+		if count == 0 then
+			break
+		end
+		integerPart = replaced
+	end
+	return integerPart .. (decimalPart or "") .. " Kg"
 end
 
-local function FormatClock(totalSeconds)
+local function FormatRemaining(totalSeconds)
 	local seconds = math.max(0, math.floor(tonumber(totalSeconds) or 0))
-	return string.format("%02dh %02dm %02ds", seconds // 3600, (seconds % 3600) // 60, seconds % 60)
+	if seconds >= 3600 then
+		return string.format("%dh %02dm", seconds // 3600, (seconds % 3600) // 60)
+	end
+	return string.format("%dm %02ds", seconds // 60, seconds % 60)
 end
 
 local function ScaleFactor(scaleValue)
@@ -222,7 +307,7 @@ local function ReadEntries()
 			local earningRate = assetInfo and assetInfo.EarningRate or 0
 			local income = 0
 			if earningRate > 0 and scaleValue > 0 then
-				income = math.max(1, math.floor(earningRate * ScaleFactor(scaleValue) * ReadMutationMultiplier(eggData.Mutations) + 0.5))
+				income = math.max(math.floor(earningRate * ScaleFactor(scaleValue) * ReadMutationMultiplier(eggData.Mutations) + 0.5), 1)
 			end
 			table.insert(entries, {
 				Id = tostring(eggKey),
@@ -248,8 +333,6 @@ local function IsVisible(entry)
 	local filter = Prediction.FilterMode
 	if filter == "All" then
 		return true
-	elseif filter == "In Bag" then
-		return entry.Status == "In Bag"
 	end
 	return entry.Status == filter
 end
@@ -276,270 +359,722 @@ local function SortEntries(entries)
 	return entries
 end
 
-local function StatusColor(entry)
-	if entry.Status == "Ready" then
-		return COLORS.Ready
-	elseif entry.Status == "Growing" then
-		return COLORS.Growing
+local function CountStatuses(entries)
+	local counts = { All = #entries, Ready = 0, Growing = 0, ["In Bag"] = 0 }
+	for _, entry in ipairs(entries) do
+		counts[entry.Status] = (counts[entry.Status] or 0) + 1
 	end
-	return COLORS.Inventory
+	return counts
+end
+
+local function SampleSequence(sequence, position)
+	local keypoints = sequence.Keypoints
+	if position <= keypoints[1].Time then
+		return keypoints[1].Value
+	end
+	for index = 2, #keypoints do
+		local previous, current = keypoints[index - 1], keypoints[index]
+		if position <= current.Time then
+			local span = current.Time - previous.Time
+			local alpha = span > 0 and (position - previous.Time) / span or 0
+			return previous.Value:Lerp(current.Value, alpha)
+		end
+	end
+	return keypoints[#keypoints].Value
+end
+
+local function CropSequence(sequence, from, to)
+	local keypoints = { ColorSequenceKeypoint.new(0, SampleSequence(sequence, from)) }
+	for _, keypoint in ipairs(sequence.Keypoints) do
+		if keypoint.Time > from + 0.001 and keypoint.Time < to - 0.001 then
+			table.insert(keypoints, ColorSequenceKeypoint.new((keypoint.Time - from) / (to - from), keypoint.Value))
+		end
+	end
+	table.insert(keypoints, ColorSequenceKeypoint.new(1, SampleSequence(sequence, to)))
+	return ColorSequence.new(keypoints)
+end
+
+local function ReadRaritySequence(entry)
+	local rarity = string.upper(tostring(entry.Rarity))
+	if rarity == "SECRET" then
+		return SECRET_SEQUENCE, 90
+	end
+	local gradient = entry.Gradient
+	if typeof(gradient) == "Instance" and gradient:IsA("UIGradient") then
+		return gradient.Color, gradient.Rotation
+	end
+	return ColorSequence.new(entry.RarityColor:Lerp(COLORS.Text, 0.35), entry.RarityColor), 90
+end
+
+local function BuildArtSequence(entry)
+	local rarity = string.upper(tostring(entry.Rarity))
+	if rarity == "SECRET" then
+		return SECRET_SEQUENCE
+	elseif rarity == "ETERNAL" then
+		return ETERNAL_SEQUENCE
+	end
+	local sequence = ReadRaritySequence(entry)
+	local brightColors = {}
+	for _, keypoint in ipairs(sequence.Keypoints) do
+		local color = keypoint.Value
+		if color.R * 0.299 + color.G * 0.587 + color.B * 0.114 >= 0.45 then
+			table.insert(brightColors, color)
+		end
+	end
+	if #brightColors == 0 then
+		table.insert(brightColors, entry.RarityColor)
+	end
+	local sampleCount = math.min(#brightColors, 8)
+	local samples = {}
+	for index = 1, sampleCount do
+		local position = math.clamp(
+			math.floor((index - 1) * (#brightColors - 1) / math.max(sampleCount - 1, 1) + 1.5),
+			1,
+			#brightColors
+		)
+		table.insert(samples, brightColors[position]:Lerp(COLORS.Text, 0.36))
+	end
+	if #samples == 1 then
+		table.insert(samples, samples[1])
+	end
+	local keypoints = {}
+	for index, color in ipairs(samples) do
+		table.insert(keypoints, ColorSequenceKeypoint.new((index - 1) / (#samples - 1), color))
+	end
+	return ColorSequence.new(keypoints)
+end
+
+local function PaintGradient(target, name, sequence, rotation)
+	local gradient = target:FindFirstChild(name)
+	if not gradient then
+		gradient = New("UIGradient", { Name = name, Parent = target })
+	end
+	gradient.Color = sequence
+	gradient.Rotation = rotation
+	return gradient
+end
+
+local function PaintRarityText(label, entry, isHeading)
+	local sequence, rotation = ReadRaritySequence(entry)
+	local reversed = math.cos(math.rad(rotation)) < -0.3 or math.sin(math.rad(rotation)) < -0.3
+	local from, to
+	if isHeading then
+		from, to = reversed and 0.5 or 0, reversed and 1 or 0.5
+	else
+		from, to = reversed and 0 or 0.5, reversed and 0.5 or 1
+	end
+	PaintGradient(label, "TextPaint", CropSequence(sequence, from, to), rotation)
+	label.TextColor3 = COLORS.Text
 end
 
 local function StatusText(entry)
 	if entry.Status == "Ready" then
-		return "Ready to hatch", 100
+		return "READY"
 	elseif entry.Status == "Growing" then
-		return FormatClock(entry.Remaining), entry.Percent
+		return FormatRemaining(entry.Remaining) .. "  " .. entry.Percent .. "%"
 	end
-	return "In bag", 0
+	return "IN BAG"
 end
 
-local function ApplyGradient(label, entry)
-	local gradient = entry.Gradient
-	if gradient then
-		New("UIGradient", {
-			Color = gradient.Color,
-			Rotation = gradient.Rotation,
-			Transparency = gradient.Transparency,
-			Parent = label,
-		})
-		label.TextColor3 = COLORS.Text
-	else
-		label.TextColor3 = entry.RarityColor
+local function ApplyStatusFill(bar, entry)
+	local colors = COLORS.InBag
+	if entry.Status == "Ready" then
+		colors = COLORS.Ready
+	elseif entry.Status == "Growing" then
+		colors = COLORS.Growing
 	end
+	bar.Gradient.Color = ColorSequence.new(colors[1], colors[2])
+	local alpha = 1
+	if entry.Status == "Growing" then
+		alpha = math.clamp(entry.Percent / 100, 0.04, 1)
+	end
+	bar.Fill.Size = UDim2.fromScale(alpha, 1)
+	bar.Text.Text = StatusText(entry)
 end
 
-local function UpdatePreviewCard(entry)
-	local card = Prediction.Card
-	if not card or card.Destroyed then
-		return
-	end
-	if not entry then
-		card:SetFields({ Name = "No egg", Rarity = "", Mutation = "", Rate = "", Meta = "Waiting for your eggs..." })
-		return
-	end
-	local statusText, percent = StatusText(entry)
-	card:SetData(entry.Name, string.format("%s  %d%%", statusText, percent), entry.Icon, nil)
-	card:SetFields({
-		Name = entry.Name,
-		Rarity = entry.Rarity,
-		RarityColor = entry.RarityColor,
-		Mutation = "",
-		Rate = FormatRate(entry.Income),
-		Meta = string.format("%s   %s   %s", FormatRate(entry.Income), FormatWeight(entry.Weight), statusText),
-	})
-end
-
-local function CreateCard(parent, entry, layoutOrder)
-	local card = New("Frame", {
-		BackgroundColor3 = COLORS.CardBackground,
+local function CreateProgressBar(parent, height, textSize)
+	local track = New("Frame", {
+		BackgroundColor3 = COLORS.Track,
 		BackgroundTransparency = 0.15,
 		BorderSizePixel = 0,
-		LayoutOrder = 100 + layoutOrder,
-		Size = UDim2.new(1, 0, 0, CARD_HEIGHT),
+		ClipsDescendants = true,
+		Size = UDim2.new(1, 0, 0, height),
 		Parent = parent,
 	}, {
-		New("UICorner", { CornerRadius = UDim.new(0, 8) }),
+		New("UICorner", { CornerRadius = UDim.new(0.5, 0) }),
+		New("UIStroke", {
+			Color = Color3.new(0, 0, 0),
+			Thickness = 1.4,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		}),
 	})
 
-	local stroke = New("UIStroke", {
-		Color = entry.RarityColor,
-		Thickness = 1,
-		Transparency = 0.35,
-		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-		Parent = card,
-	})
-
-	local art = New("Frame", {
-		BackgroundColor3 = entry.RarityColor,
-		BackgroundTransparency = 0.35,
+	local fill = New("Frame", {
+		BackgroundColor3 = COLORS.Text,
 		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(CARD_PADDING, CARD_PADDING),
-		Size = UDim2.fromOffset(ART_SIZE, ART_SIZE),
-		ClipsDescendants = true,
-		Parent = card,
+		Size = UDim2.fromScale(1, 1),
+		Parent = track,
 	}, {
-		New("UICorner", { CornerRadius = UDim.new(0, 6) }),
+		New("UICorner", { CornerRadius = UDim.new(0.5, 0) }),
+	})
+
+	local gradient = New("UIGradient", {
+		Color = ColorSequence.new(COLORS.InBag[1], COLORS.InBag[2]),
+		Parent = fill,
+	})
+
+	New("Frame", {
+		BackgroundColor3 = COLORS.Text,
+		BackgroundTransparency = 0.78,
+		BorderSizePixel = 0,
+		Position = UDim2.fromScale(0, 0.08),
+		Size = UDim2.fromScale(1, 0.34),
+		Parent = fill,
+	}, {
+		New("UICorner", { CornerRadius = UDim.new(0.5, 0) }),
+	})
+
+	local label = CreateLabel(track, {
+		Size = UDim2.fromScale(1, 1),
+		TextSize = textSize,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		ZIndex = 3,
+	})
+	New("UIStroke", {
+		Color = Color3.new(0, 0, 0),
+		Thickness = math.max(1, textSize * 0.12),
+		LineJoinMode = Enum.LineJoinMode.Round,
+		Parent = label,
+	})
+
+	return {
+		Track = track,
+		Fill = fill,
+		Gradient = gradient,
+		Text = label,
+	}
+end
+
+local function CardMetrics(cardWidth)
+	local inset = 6
+	local nameSize = math.clamp(math.floor(cardWidth * 0.105 + 0.5), 12, 18)
+	local raritySize = math.clamp(math.floor(cardWidth * 0.072 + 0.5), 9, 12)
+	local valueSize = math.clamp(math.floor(cardWidth * 0.113 + 0.5), 13, 20)
+	local statsSize = math.clamp(math.floor(cardWidth * 0.078 + 0.5), 9, 13)
+	local barSize = math.clamp(math.floor(cardWidth * 0.074 + 0.5), 9, 12)
+
+	local art = cardWidth - inset * 2
+	local nameHeight = nameSize + 3
+	local rarityHeight = raritySize + 2
+	local valueHeight = valueSize + 3
+	local statsHeight = statsSize + 2
+	local barHeight = math.max(14, barSize + 5)
+
+	local nameY = inset + art + 5
+	local rarityY = nameY + nameHeight
+	local valueY = rarityY + rarityHeight + 1
+	local statsY = valueY + valueHeight + 1
+	local barY = statsY + statsHeight + 3
+
+	return {
+		Width = cardWidth,
+		Height = barY + barHeight + inset,
+		Inset = inset,
+		Art = art,
+		NameSize = nameSize,
+		NameY = nameY,
+		NameHeight = nameHeight,
+		RaritySize = raritySize,
+		RarityY = rarityY,
+		RarityHeight = rarityHeight,
+		ValueSize = valueSize,
+		ValueY = valueY,
+		ValueHeight = valueHeight,
+		StatsSize = statsSize,
+		StatsY = statsY,
+		StatsHeight = statsHeight,
+		BarSize = barSize,
+		BarY = barY,
+		BarHeight = barHeight,
+	}
+end
+
+local function CreateCardArt(parent, entry, metrics)
+	local art = New("Frame", {
+		BackgroundColor3 = COLORS.Text,
+		BackgroundTransparency = 0,
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+		Position = UDim2.fromOffset(metrics.Inset, metrics.Inset),
+		Size = UDim2.fromOffset(metrics.Art, metrics.Art),
+		Parent = parent,
+	}, {
+		New("UICorner", { CornerRadius = UDim.new(0, 7) }),
 		New("ImageLabel", {
 			BackgroundTransparency = 1,
 			Image = CARD_TILE_ASSET,
-			ImageColor3 = entry.RarityColor,
-			ImageTransparency = 0.82,
+			ImageColor3 = COLORS.TileTint,
+			ImageTransparency = 0.86,
 			ScaleType = Enum.ScaleType.Tile,
-			TileSize = UDim2.fromScale(0.5, 0.5),
+			TileSize = UDim2.fromScale(0.34, 0.42),
 			Size = UDim2.fromScale(1, 1),
 		}),
 		New("ImageLabel", {
 			BackgroundTransparency = 1,
 			AnchorPoint = Vector2.new(0.5, 0.5),
 			Position = UDim2.fromScale(0.5, 0.52),
-			Size = UDim2.fromScale(0.92, 0.92),
+			Size = UDim2.fromScale(0.88, 0.88),
 			Image = entry.Icon,
 			ScaleType = Enum.ScaleType.Fit,
+			ZIndex = 2,
+		}),
+		New("Frame", {
+			BackgroundColor3 = COLORS.Text,
+			BackgroundTransparency = 0.9,
+			BorderSizePixel = 0,
+			Size = UDim2.fromScale(1, 1),
+		}, {
+			New("UIGradient", {
+				Rotation = 90,
+				Transparency = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 0.86),
+					NumberSequenceKeypoint.new(0.45, 0.94),
+					NumberSequenceKeypoint.new(1, 1),
+				}),
+			}),
+		}),
+	})
+	PaintGradient(art, "RarityPaint", BuildArtSequence(entry), 90)
+	return art
+end
+
+local function CreateCard(parent, entry, metrics, index)
+	local card = New("Frame", {
+		Name = "PredictorCard",
+		BackgroundColor3 = COLORS.Card,
+		BackgroundTransparency = 0.12,
+		BorderSizePixel = 0,
+		LayoutOrder = index,
+		Size = UDim2.fromOffset(metrics.Width, metrics.Height),
+		Parent = parent,
+	}, {
+		New("UICorner", { CornerRadius = UDim.new(0, 9) }),
+		New("UIStroke", {
+			Color = COLORS.Border,
+			Thickness = 1.2,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
 		}),
 	})
 
-	if entry.Gradient then
-		New("UIGradient", {
-			Color = entry.Gradient.Color,
-			Rotation = entry.Gradient.Rotation,
-			Parent = art,
-		})
-	end
+	CreateCardArt(card, entry, metrics)
 
-	local textLeft = CARD_PADDING + ART_SIZE + 10
-	local textWidth = UDim.new(1, -(textLeft + 8))
-
-	local nameLabel = New("TextLabel", {
-		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(textLeft, 8),
-		Size = UDim2.new(textWidth.Scale, textWidth.Offset, 0, 16),
-		Font = Enum.Font.GothamBold,
+	local textWidth = UDim.new(1, -metrics.Inset * 2)
+	local nameLabel = CreateLabel(card, {
+		Position = UDim2.fromOffset(metrics.Inset, metrics.NameY),
+		Size = UDim2.new(textWidth.Scale, textWidth.Offset, 0, metrics.NameHeight),
 		Text = entry.Name,
-		TextSize = 13,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		TextTruncate = Enum.TextTruncate.AtEnd,
-		Parent = card,
+		TextSize = metrics.NameSize,
 	})
-	ApplyGradient(nameLabel, entry)
+	PaintRarityText(nameLabel, entry, true)
 
-	New("TextLabel", {
-		BackgroundTransparency = 1,
-		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -8, 0, 8),
-		Size = UDim2.fromOffset(84, 16),
-		Font = Enum.Font.GothamBold,
-		Text = entry.Rarity,
-		TextColor3 = entry.RarityColor,
-		TextSize = 12,
-		TextXAlignment = Enum.TextXAlignment.Right,
-		TextTruncate = Enum.TextTruncate.AtEnd,
-		Parent = card,
+	local rarityLabel = CreateLabel(card, {
+		Position = UDim2.fromOffset(metrics.Inset, metrics.RarityY),
+		Size = UDim2.new(textWidth.Scale, textWidth.Offset, 0, metrics.RarityHeight),
+		Text = string.upper(entry.Rarity),
+		TextSize = metrics.RaritySize,
 	})
+	PaintRarityText(rarityLabel, entry, false)
 
-	New("TextLabel", {
-		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(textLeft, 28),
-		Size = UDim2.new(textWidth.Scale, textWidth.Offset, 0, 15),
-		Font = Enum.Font.GothamBold,
+	local valueLabel = CreateLabel(card, {
+		Position = UDim2.fromOffset(metrics.Inset, metrics.ValueY),
+		Size = UDim2.new(textWidth.Scale, textWidth.Offset, 0, metrics.ValueHeight),
 		Text = FormatRate(entry.Income),
-		TextColor3 = COLORS.Income,
-		TextSize = 12,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Parent = card,
+		TextSize = metrics.ValueSize,
 	})
+	PaintGradient(valueLabel, "TextPaint", ColorSequence.new(COLORS.IncomeTop, COLORS.IncomeBottom), 90)
 
-	local statusText, percent = StatusText(entry)
-	New("TextLabel", {
+	local statsRow = New("Frame", {
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(textLeft, 45),
-		Size = UDim2.new(textWidth.Scale, textWidth.Offset, 0, 14),
-		Font = Enum.Font.Gotham,
-		Text = string.format("%s  ·  %s", FormatWeight(entry.Weight), statusText),
-		TextColor3 = entry.Status == "In Bag" and COLORS.Inventory or COLORS.Weight,
-		TextSize = 11,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Parent = card,
-	})
-
-	local track = New("Frame", {
-		BackgroundColor3 = COLORS.ProgressTrack,
-		BackgroundTransparency = 0.15,
-		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(textLeft, 66),
-		Size = UDim2.new(textWidth.Scale, textWidth.Offset, 0, 14),
+		Position = UDim2.fromOffset(metrics.Inset, metrics.StatsY),
+		Size = UDim2.new(1, -metrics.Inset * 2, 0, metrics.StatsHeight),
 		Parent = card,
 	}, {
-		New("UICorner", { CornerRadius = UDim.new(0, 4) }),
+		New("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Padding = UDim.new(0, 5),
+		}),
 	})
 
-	local fill = New("Frame", {
-		BackgroundColor3 = StatusColor(entry),
-		BorderSizePixel = 0,
-		Size = UDim2.fromScale(math.clamp(percent / 100, 0, 1), 1),
-		Parent = track,
-	}, {
-		New("UICorner", { CornerRadius = UDim.new(0, 4) }),
+	local scaleLabel = CreateLabel(statsRow, {
+		AutomaticSize = Enum.AutomaticSize.X,
+		LayoutOrder = 1,
+		Size = UDim2.fromScale(0, 1),
+		Text = string.format("x%.2f", entry.Scale),
+		TextSize = metrics.StatsSize,
 	})
+	PaintGradient(scaleLabel, "TextPaint", ColorSequence.new(COLORS.ScaleTop, COLORS.ScaleBottom), 90)
 
-	if entry.Gradient then
-		New("UIGradient", {
-			Color = entry.Gradient.Color,
-			Rotation = entry.Gradient.Rotation,
-			Parent = fill,
-		})
-	end
+	local weightLabel = CreateLabel(statsRow, {
+		AutomaticSize = Enum.AutomaticSize.X,
+		LayoutOrder = 2,
+		Size = UDim2.fromScale(0, 1),
+		Text = FormatWeight(entry.Weight),
+		TextSize = metrics.StatsSize,
+	})
+	PaintGradient(weightLabel, "TextPaint", ColorSequence.new(COLORS.WeightTop, COLORS.WeightBottom), 90)
 
-	if entry.Status == "In Bag" then
-		fill.Visible = false
-	end
+	local bar = CreateProgressBar(card, metrics.BarHeight, metrics.BarSize)
+	bar.Track.Position = UDim2.fromOffset(metrics.Inset, metrics.BarY)
+	bar.Track.Size = UDim2.new(1, -metrics.Inset * 2, 0, metrics.BarHeight)
+	ApplyStatusFill(bar, entry)
 
-	New("TextLabel", {
-		BackgroundTransparency = 1,
-		Size = UDim2.fromScale(1, 1),
-		Font = Enum.Font.GothamBold,
-		Text = entry.Status == "In Bag" and "IN BAG" or string.format("%d%%", percent),
-		TextColor3 = COLORS.Text,
-		TextSize = 10,
-		TextTransparency = 0.15,
-		Parent = track,
+	local selection = New("UIStroke", {
+		Color = COLORS.Select,
+		Thickness = 2.2,
+		Transparency = 1,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		Parent = card,
 	})
 
 	local button = New("TextButton", {
 		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
 		Size = UDim2.fromScale(1, 1),
 		Text = "",
+		ZIndex = 5,
 		Parent = card,
 	})
 
 	button.MouseButton1Click:Connect(function()
 		Prediction.SelectedId = entry.Id
-		UpdatePreviewCard(entry)
-		for cardId, cardStroke in pairs(Prediction.Cards) do
-			cardStroke.Transparency = cardId == entry.Id and 0 or 0.35
+		Prediction.SelectCard()
+		if Prediction.Preview then
+			Prediction.Preview.Update(entry)
 		end
 	end)
 
-	return card, stroke
+	return {
+		Frame = card,
+		Selection = selection,
+		Update = function(current)
+			valueLabel.Text = FormatRate(current.Income)
+			scaleLabel.Text = string.format("x%.2f", current.Scale)
+			weightLabel.Text = FormatWeight(current.Weight)
+			ApplyStatusFill(bar, current)
+		end,
+	}
+end
+
+local function CreatePreview(parent)
+	local frame = New("Frame", {
+		Name = "PredictorPreview",
+		BackgroundColor3 = COLORS.Card,
+		BackgroundTransparency = 0.12,
+		BorderSizePixel = 0,
+		LayoutOrder = 2,
+		Size = UDim2.new(1, 0, 0, PREVIEW_HEIGHT),
+		Parent = parent,
+	}, {
+		New("UICorner", { CornerRadius = UDim.new(0, 10) }),
+		New("UIStroke", {
+			Color = COLORS.Border,
+			Thickness = 1.4,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		}),
+	})
+
+	local art = New("Frame", {
+		BackgroundColor3 = COLORS.Text,
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+		Position = UDim2.fromOffset(8, 8),
+		Size = UDim2.fromOffset(PREVIEW_ART_SIZE, PREVIEW_ART_SIZE),
+		Parent = frame,
+	}, {
+		New("UICorner", { CornerRadius = UDim.new(0, 8) }),
+		New("ImageLabel", {
+			BackgroundTransparency = 1,
+			Image = CARD_TILE_ASSET,
+			ImageColor3 = COLORS.TileTint,
+			ImageTransparency = 0.86,
+			ScaleType = Enum.ScaleType.Tile,
+			TileSize = UDim2.fromScale(0.34, 0.42),
+			Size = UDim2.fromScale(1, 1),
+		}),
+	})
+
+	local rays = New("ImageLabel", {
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.46),
+		Size = UDim2.fromScale(1.9, 1.9),
+		Image = PREVIEW_RAYS_ASSET,
+		ImageColor3 = FALLBACK_RARITY_COLOR,
+		ImageTransparency = 0.2,
+		ScaleType = Enum.ScaleType.Fit,
+		Parent = art,
+	})
+
+	New("ImageLabel", {
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.9),
+		Size = UDim2.fromScale(0.62, 0.14),
+		Image = PREVIEW_SHADOW_ASSET,
+		ImageColor3 = COLORS.ShadowTint,
+		ImageTransparency = 0.55,
+		ScaleType = Enum.ScaleType.Stretch,
+		ZIndex = 2,
+		Parent = art,
+	})
+
+	local eggImage = New("ImageLabel", {
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.47),
+		Size = UDim2.fromScale(0.9, 0.9),
+		Image = "",
+		ScaleType = Enum.ScaleType.Fit,
+		ZIndex = 3,
+		Parent = art,
+	})
+
+	local bodyX = 8 + PREVIEW_ART_SIZE + 12
+	local body = New("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(bodyX, 8),
+		Size = UDim2.new(1, -(bodyX + 8), 0, PREVIEW_ART_SIZE),
+		Parent = frame,
+	})
+
+	local nameLabel = CreateLabel(body, {
+		Size = UDim2.new(1, 0, 0, 22),
+		Text = "No egg",
+		TextSize = 18,
+		TextColor3 = COLORS.Subtext,
+	})
+
+	local rarityLabel = CreateLabel(body, {
+		Position = UDim2.fromOffset(0, 23),
+		Size = UDim2.new(1, 0, 0, 13),
+		TextSize = 11,
+	})
+
+	local valueLabel = CreateLabel(body, {
+		Position = UDim2.fromOffset(0, 38),
+		Size = UDim2.new(1, 0, 0, 26),
+		TextSize = 21,
+	})
+	PaintGradient(valueLabel, "TextPaint", ColorSequence.new(COLORS.IncomeTop, COLORS.IncomeBottom), 90)
+
+	local statsRow = New("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(0, 65),
+		Size = UDim2.new(1, 0, 0, 16),
+		Parent = body,
+	}, {
+		New("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Padding = UDim.new(0, 8),
+		}),
+	})
+
+	local scaleLabel = CreateLabel(statsRow, {
+		AutomaticSize = Enum.AutomaticSize.X,
+		LayoutOrder = 1,
+		Size = UDim2.fromScale(0, 1),
+		TextSize = 12,
+	})
+	PaintGradient(scaleLabel, "TextPaint", ColorSequence.new(COLORS.ScaleTop, COLORS.ScaleBottom), 90)
+
+	local weightLabel = CreateLabel(statsRow, {
+		AutomaticSize = Enum.AutomaticSize.X,
+		LayoutOrder = 2,
+		Size = UDim2.fromScale(0, 1),
+		TextSize = 12,
+	})
+	PaintGradient(weightLabel, "TextPaint", ColorSequence.new(COLORS.WeightTop, COLORS.WeightBottom), 90)
+
+	local bar = CreateProgressBar(body, 16, 11)
+	bar.Track.Position = UDim2.fromOffset(0, 86)
+	bar.Track.Size = UDim2.new(1, 0, 0, 16)
+
+	local preview = {
+		Frame = frame,
+		Art = art,
+		Rays = rays,
+		Image = eggImage,
+		Key = nil,
+	}
+
+	function preview.Update(entry)
+		if not entry then
+			preview.Key = nil
+			nameLabel.Text = "No egg"
+			nameLabel.TextColor3 = COLORS.Subtext
+			rarityLabel.Text = ""
+			valueLabel.Text = ""
+			scaleLabel.Text = ""
+			weightLabel.Text = ""
+			bar.Text.Text = ""
+			bar.Fill.Size = UDim2.fromScale(0, 1)
+			eggImage.Image = ""
+			return
+		end
+
+		local key = entry.Id .. "|" .. entry.Rarity .. "|" .. entry.Name
+		if preview.Key ~= key then
+			preview.Key = key
+			PaintGradient(art, "RarityPaint", BuildArtSequence(entry), 90)
+			PaintRarityText(nameLabel, entry, true)
+			rarityLabel.Text = string.upper(entry.Rarity)
+			PaintRarityText(rarityLabel, entry, false)
+			eggImage.Image = entry.Icon
+		end
+
+		valueLabel.Text = FormatRate(entry.Income)
+		scaleLabel.Text = string.format("x%.2f", entry.Scale)
+		weightLabel.Text = FormatWeight(entry.Weight)
+		ApplyStatusFill(bar, entry)
+	end
+
+	return preview
+end
+
+local function CreateFilterBar(parent)
+	local bar = New("Frame", {
+		Name = "PredictorFilters",
+		BackgroundTransparency = 1,
+		LayoutOrder = 3,
+		Size = UDim2.new(1, 0, 0, 26),
+		Parent = parent,
+	}, {
+		New("UIGridLayout", {
+			CellSize = UDim2.new(0.25, -3, 0, 26),
+			CellPadding = UDim2.fromOffset(4, 0),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
+
+	Prediction.Filters = {}
+	for index, filter in ipairs(FILTERS) do
+		local button = New("TextButton", {
+			BackgroundColor3 = COLORS.Card,
+			BackgroundTransparency = 0.15,
+			AutoButtonColor = false,
+			BorderSizePixel = 0,
+			LayoutOrder = index,
+			Text = "",
+			Parent = bar,
+		}, {
+			New("UICorner", { CornerRadius = UDim.new(0.3, 0) }),
+		})
+
+		local stroke = New("UIStroke", {
+			Color = COLORS.Border,
+			Thickness = 1.2,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+			Parent = button,
+		})
+
+		local gradient = New("UIGradient", {
+			Color = ColorSequence.new(filter.Colors[1], filter.Colors[2]),
+			Rotation = 90,
+			Enabled = false,
+			Parent = button,
+		})
+
+		local label = New("TextLabel", {
+			BackgroundTransparency = 1,
+			Position = UDim2.fromOffset(2, 0),
+			Size = UDim2.new(1, -4, 1, 0),
+			Text = filter.Title,
+			TextColor3 = COLORS.Subtext,
+			TextScaled = true,
+			Parent = button,
+		}, {
+			New("UITextSizeConstraint", { MaxTextSize = 10, MinTextSize = 6 }),
+		})
+		UseDisplayFont(label)
+
+		button.MouseButton1Click:Connect(function()
+			Prediction.SetFilterMode(filter.Key)
+		end)
+
+		Prediction.Filters[filter.Key] = {
+			Button = button,
+			Stroke = stroke,
+			Gradient = gradient,
+			Label = label,
+			Title = filter.Title,
+		}
+	end
+
+	return bar
+end
+
+function Prediction.SetFilterActive()
+	for key, filter in pairs(Prediction.Filters) do
+		local isActive = key == Prediction.FilterMode
+		local count = Prediction.Counts[key] or 0
+		filter.Label.Text = filter.Title .. "  " .. tostring(count)
+		filter.Gradient.Enabled = isActive
+		filter.Button.BackgroundColor3 = isActive and COLORS.Text or COLORS.Card
+		filter.Button.BackgroundTransparency = isActive and 0 or 0.15
+		filter.Label.TextColor3 = isActive and Color3.new(0, 0, 0) or COLORS.Subtext
+		filter.Stroke.Color = isActive and Color3.new(0, 0, 0) or COLORS.Border
+	end
+end
+
+function Prediction.SelectCard()
+	for id, card in pairs(Prediction.Cards) do
+		card.Selection.Transparency = id == Prediction.SelectedId and 0 or 1
+	end
 end
 
 local function ClearCards()
-	for _, child in ipairs(Prediction.Groupbox.Container:GetChildren()) do
-		if child:GetAttribute("PredictorCard") then
-			child:Destroy()
-		end
+	for _, card in pairs(Prediction.Cards) do
+		card.Frame:Destroy()
 	end
 	Prediction.Cards = {}
 end
 
-local function RenderCards(entries)
-	ClearCards()
-	local container = Prediction.Groupbox.Container
-	for index, entry in ipairs(entries) do
-		local card, stroke = CreateCard(container, entry, index)
-		card:SetAttribute("PredictorCard", true)
-		Prediction.Cards[entry.Id] = stroke
-		if Prediction.SelectedId == entry.Id then
-			stroke.Transparency = 0
-		end
+local function RenderList(entries)
+	local listFrame = Prediction.ListFrame
+	local width = math.floor(listFrame.AbsoluteSize.X)
+	if width <= 0 then
+		width = 320
 	end
+	local columns = width >= 300 and 2 or 1
+	local cardWidth = math.max(120, math.floor((width - GRID_GAP * (columns - 1)) / columns))
+	local metrics = CardMetrics(cardWidth)
+
+	ClearCards()
+	Prediction.Grid.CellSize = UDim2.fromOffset(metrics.Width, metrics.Height)
+	Prediction.Grid.CellPadding = UDim2.fromOffset(GRID_GAP, GRID_GAP)
+
+	local rows = math.ceil(#entries / columns)
+	listFrame.Size = UDim2.new(1, 0, 0, rows * metrics.Height + math.max(0, rows - 1) * GRID_GAP)
+	Prediction.CardWidth = width
+
+	for index, entry in ipairs(entries) do
+		Prediction.Cards[entry.Id] = CreateCard(listFrame, entry, metrics, index)
+	end
+
+	Prediction.SelectCard()
 	Prediction.Groupbox:Resize()
 end
 
 local function BuildSignature(entries)
-	local statusCount = { Ready = 0, Growing = 0, ["In Bag"] = 0 }
+	local ids = {}
 	for _, entry in ipairs(entries) do
-		statusCount[entry.Status] = (statusCount[entry.Status] or 0) + 1
+		table.insert(ids, entry.Id)
 	end
-	return string.format(
-		"%s|%s|%d|%d|%d|%d",
-		Prediction.SortMode,
-		Prediction.FilterMode,
-		#entries,
-		statusCount.Ready,
-		statusCount.Growing,
-		statusCount["In Bag"]
-	)
+	return table.concat({ Prediction.SortMode, Prediction.FilterMode, table.concat(ids, ",") }, "|")
 end
 
 function Prediction.SetSortMode(mode)
@@ -553,12 +1088,13 @@ function Prediction.SetFilterMode(mode)
 	if table.find(Prediction.FilterOptions, mode) then
 		Prediction.FilterMode = mode
 		Prediction.Signature = ""
+		Prediction.SetFilterActive()
 	end
 end
 
 function Prediction.SetCardVisible(visible)
-	if Prediction.Card and Prediction.Card.Frame then
-		Prediction.Card.Frame.Visible = visible == true
+	if Prediction.Preview then
+		Prediction.Preview.Frame.Visible = visible == true
 		if Prediction.Groupbox then
 			Prediction.Groupbox:Resize()
 		end
@@ -567,6 +1103,7 @@ end
 
 function Prediction.Build(groupbox)
 	Prediction.Groupbox = groupbox
+	local container = groupbox.Container
 
 	groupbox:AddDropdown("Dropdown_Predictor_Sort", {
 		Text = "Sort By",
@@ -587,61 +1124,85 @@ function Prediction.Build(groupbox)
 		end,
 	})
 
-	Prediction.Card = groupbox:AddSpotlightCard("Card_Predictor_Egg", {
-		Height = 110,
-		Title = "Egg Predictor",
-		Description = "Waiting for your eggs...",
-		Image = "",
+	Prediction.Preview = CreatePreview(container)
+	CreateFilterBar(container)
+
+	Prediction.ListFrame = New("Frame", {
+		Name = "PredictorList",
+		BackgroundTransparency = 1,
+		LayoutOrder = 4,
+		Size = UDim2.new(1, 0, 0, 0),
+		Parent = container,
 	})
 
-	groupbox:AddDropdown("Dropdown_Predictor_Filter", {
-		Text = "Egg Status",
-		Values = Prediction.FilterOptions,
-		Default = Prediction.FilterMode,
-		Tooltip = "Only show eggs in this state",
-		Callback = function(selectedFilter)
-			Prediction.SetFilterMode(selectedFilter)
-		end,
+	Prediction.Grid = New("UIGridLayout", {
+		CellSize = UDim2.fromOffset(160, 250),
+		CellPadding = UDim2.fromOffset(GRID_GAP, GRID_GAP),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Parent = Prediction.ListFrame,
 	})
+
+	groupbox:Resize()
 
 	Prediction.Signature = ""
 	Prediction.NextRefreshAt = 0
+	Prediction.LastFrameAt = os.clock()
 
 	Prediction.Connection = RunService.Heartbeat:Connect(function()
 		local now = os.clock()
+		local delta = math.min(now - Prediction.LastFrameAt, 0.1)
+		Prediction.LastFrameAt = now
+
+		local preview = Prediction.Preview
+		if preview and preview.Frame.Visible then
+			Prediction.RaysAngle = (Prediction.RaysAngle + delta * 14) % 360
+			preview.Rays.Rotation = Prediction.RaysAngle
+		end
+
 		if now < Prediction.NextRefreshAt then
 			return
 		end
 		Prediction.NextRefreshAt = now + 1
 
+		local allEntries = ReadEntries()
+		Prediction.Counts = CountStatuses(allEntries)
+
 		local visible = {}
-		for _, entry in ipairs(SortEntries(ReadEntries())) do
+		for _, entry in ipairs(SortEntries(allEntries)) do
 			if IsVisible(entry) then
 				table.insert(visible, entry)
 			end
 		end
 		Prediction.Entries = visible
 
-		local signature = BuildSignature(visible)
-		if signature ~= Prediction.Signature then
-			Prediction.Signature = signature
-			if not Prediction.SelectedId or not Prediction.Cards[Prediction.SelectedId] then
-				Prediction.SelectedId = visible[1] and visible[1].Id or nil
-			end
-			RenderCards(visible)
+		if not Prediction.SelectedId or not Prediction.Cards[Prediction.SelectedId] then
+			Prediction.SelectedId = visible[1] and visible[1].Id or nil
 		end
 
-		local selectedId = Prediction.SelectedId
-		if selectedId and Prediction.Cards[selectedId] then
+		local signature = BuildSignature(visible)
+		local width = math.floor(Prediction.ListFrame.AbsoluteSize.X)
+		if signature ~= Prediction.Signature or math.abs(width - Prediction.CardWidth) > 1 then
+			Prediction.Signature = signature
+			RenderList(visible)
+		else
 			for _, entry in ipairs(visible) do
-				if entry.Id == selectedId then
-					UpdatePreviewCard(entry)
-					break
+				local card = Prediction.Cards[entry.Id]
+				if card then
+					card.Update(entry)
 				end
 			end
-		else
-			UpdatePreviewCard(visible[1])
 		end
+
+		Prediction.SetFilterActive()
+
+		local selectedEntry = nil
+		for _, entry in ipairs(visible) do
+			if entry.Id == Prediction.SelectedId then
+				selectedEntry = entry
+				break
+			end
+		end
+		Prediction.Preview.Update(selectedEntry or visible[1])
 	end)
 end
 

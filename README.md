@@ -11,7 +11,7 @@ Tujuan repo: satu sumber kebenaran yang rapi, mudah dibaca, mudah dimaintain, da
 | Path | Isi | Peran |
 | --- | --- | --- |
 | `Games/Steal-An-Egg.luau` | Hub utama game (single file, ±15.100 baris) | Kode produksi. Semua fitur, engine, dan UI hub ada di sini. |
-| `Games/StealAnEgg/Prediction.luau` | Modul tab Predictor (±510 baris) | Modul terpisah: baca egg, format uang/berat/waktu, rich text gradient, dan kartu preview. Dimuat hub lewat URL. |
+| `Games/StealAnEgg/Prediction.luau` | Modul tab Predictor (±1200 baris) | Modul terpisah: baca egg, format uang/berat/waktu, gradient rarity, kartu preview besar, tombol status, dan grid kartu egg. Dimuat hub lewat URL. |
 | `Library/OniumV4.luau` | UI library hub (turunan Obsidian, ±17.800 baris) | Komponen window, tab, groupbox, dan element. |
 | `Manager/` | `FpsManger.luau`, `SaveManager.luau`, `ThemeManger.luau`, `ServerManger.luau` | Manager UI (performance, config, theme, server). Dimuat hub lewat URL, bukan dari sini. |
 | `Source/ChiliHub.luau` | Source hasil deobfuscate (Chili Hub V3, ±53.000 baris) | **Referensi baca saja.** Bukan bahan copy-paste. |
@@ -151,14 +151,20 @@ Tab `Predictor` dibuat sebelum `Settings` dan seluruh logikanya ada di modul ter
 | Kontrol | Perilaku |
 | --- | --- |
 | `Sort By` | `Value` (income per detik), `Rarity` (rank rarity), `Time Left` (sisa waktu tumbuh paling dekat). |
-| `Show Preview Card` | Menampilkan atau menyembunyikan kartu preview (`AddSpotlightCard`). |
-| Kartu preview | Gambar egg dari `EggRecords.EggIcon` + nama + rarity (gradient rarity library) + income ber-gradient + meta `$x/s • Rarity • xxx Kg • status/waktu`. |
-| `Egg Status` | `All`, `Ready`, `Growing`, `In Bag`. |
-| `Egg List` | Dropdown berisi egg dengan ikon (librari `ValueImages`); pilih satu untuk ditampilkan di kartu. |
+| `Show Preview Card` | Menampilkan atau menyembunyikan kartu preview besar. |
+| Kartu preview | Kotak art persegi (tile + rays berputar + bayangan + `EggRecords.EggIcon`) dan kolom teks: nama, rarity, income, `xScale` + berat, bar durasi berisi sisa waktu + persen. |
+| Tombol status | `ALL`, `READY`, `GROWING`, `IN BAG` dengan jumlah egg; yang aktif berisi gradient status, sisanya gelap. |
+| Daftar egg | Grid kartu potret (otomatis 2 kolom) berisi art persegi, nama, rarity, income, `xScale` + berat, dan bar durasi; klik kartu untuk memilihnya di preview. |
 
 Sumber data semuanya dari modul game, bukan karangan: `EggState.ReadOwnerEggs` (daftar egg), `EggState.IsReadyToHatch`, `EggRecords.GrowthSecondsRemaining` / `GrowthDuration` / `GrowthSpeedMultiplier` / `WeightKg` / `EggIcon`, `Assets.Directory` (nama, rarity, `EarningRate`, icon), dan `Mutations.EarningsFor` (multiplier mutasi). Income memakai rumus Chili: `EarningRate * ScaleFactor(scale) * MutationMultiplier`.
 
-Catatan: library belum punya canvas seperti Chili, jadi kartu memakai element `AddSpotlightCard` bawaan (gambar + glow + teks), sedangkan efek gradient teks dibuat di modul lewat rich text `<font color>` per karakter (fungsi `Gradient`, `RainbowWord`, `Paint`).
+Catatan tampilan:
+
+- Gambar dan teks kartu dibuat manual di modul (bukan `AddImage`/`AddSpotlightCard` bawaan library), karena kartu memerlukan art persegi, bar berisi waktu, dan teks yang bisa diberi gradient per label. Hanya kontrol `Sort By` dan `Show Preview Card` yang memakai element library.
+- Warna teks mengikuti palette Chili: income `#4DFF7A`, skala `#FFDF8A`, berat `#CDE7FF`, status Ready `#4DFF7A`, Growing `#FFC24D`, In Bag `#7FD8FF`.
+- Gradient nama dan rarity diambil dari instance game `ReplicatedStorage.Assets.UI.RarityGradients/<rarityId>/RarityGradient` (rotation + color sequence di-crop seperti Chili), dengan `SECRET` memakai sequence khusus dan fallback `Color:Lerp(white, 0.35)` bila gradient tidak tersedia.
+- Bar memakai pasangan warna status milik Chili (Ready `#AAFF96 -> #1ECD55`, Growing `#FFE178 -> #FF8228`, In Bag `#A0E1FF -> #3C8CFF`); angka waktu dan persen ditulis di tengah bar, persis seperti Chili.
+- Garis hitam tipis pada versi pertama berasal dari `UIStroke` bawaan `AddSpotlightCard` (judul dan rarity), bukan dari modul; element itu sudah tidak dipakai lagi.
 
 ### Sumber yang Di-fetch
 
