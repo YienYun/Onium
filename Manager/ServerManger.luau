@@ -708,6 +708,7 @@ local function EnableAutoLoad()
 	ApplyAutoLoadSetting(true)
 
 	if QueueAutoLoadScript() then
+		Notify("Auto Load Script Enabled", "This hub will re-run itself after every teleport.")
 		return
 	end
 
@@ -715,7 +716,7 @@ local function EnableAutoLoad()
 	Notify("Auto Load Unavailable", "This executor does not support queue on teleport.")
 end
 
-local function AskAutoLoadConfirmation(targetTab)
+local function ShowAutoLoadDialog(targetTab)
 	local window = targetTab.Window
 	if not window or type(window.AddDialog) ~= "function" then
 		return false
@@ -726,7 +727,7 @@ local function AskAutoLoadConfirmation(targetTab)
 		return true
 	end
 
-	window:AddDialog("Dialog_Server_AutoLoad", {
+	return pcall(window.AddDialog, window, "Dialog_Server_AutoLoad", {
 		Title = "Enable Auto Load Script",
 		Description = "The hub will queue itself and re-run automatically after every teleport. "
 			.. "This needs an executor that supports queue on teleport.",
@@ -741,8 +742,24 @@ local function AskAutoLoadConfirmation(targetTab)
 			end },
 		},
 	})
+end
 
-	return true
+local function OnAutoLoadClicked(targetTab)
+	-- Runs after the click has fully released: building the dialog inside the click
+	-- event makes it open and get dismissed by the same input.
+	task.defer(function()
+		if not IsAutoLoadEnabled() then
+			ApplyAutoLoadSetting(false)
+			return
+		end
+
+		if ShowAutoLoadDialog(targetTab) then
+			return
+		end
+
+		DisableAutoLoad()
+		Notify("Auto Load Unavailable", "Could not open the confirmation dialog.")
+	end)
 end
 
 function ServerManager:BuildServerSection(targetTab, useRightSide)
@@ -768,18 +785,7 @@ function ServerManager:BuildServerSection(targetTab, useRightSide)
 	TryConnect(function()
 		return AutoLoadToggle.Holder.MouseButton1Click
 	end, function()
-		-- The library flips the value before this handler runs, so the value already
-		-- holds the state the user wants.
-		if not IsAutoLoadEnabled() then
-			DisableAutoLoad()
-			return
-		end
-
-		ReflectAutoLoadToggle(false)
-
-		if not AskAutoLoadConfirmation(targetTab) then
-			EnableAutoLoad()
-		end
+		OnAutoLoadClicked(targetTab)
 	end)
 
 	serverGroup:AddDropdown("Dropdown_Server_HopMode", {
