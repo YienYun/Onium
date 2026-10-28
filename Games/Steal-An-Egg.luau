@@ -14,9 +14,11 @@ local StatsService = game:GetService("Stats")
 local LocalPlayer = Players.LocalPlayer
 
 local REPO_RAW = "https://raw.githubusercontent.com/YienYun/Onium/refs/heads/arena/476c38f4-onium/"
-local LIBRARY_URL = REPO_RAW .. "Library/OniumV4.luau"
-local MANAGER_REPO = REPO_RAW .. "Manager/"
-local FPS_MANAGER_URL = MANAGER_REPO .. "FpsManger.luau"
+local CACHE_BUST = "?v=" .. tostring(os.time())
+
+local function RepoFile(relativePath)
+	return REPO_RAW .. relativePath .. CACHE_BUST
+end
 
 local Hub = {
 	Alive = true,
@@ -141,7 +143,7 @@ function Hub.Lifecycle.DisposeAll()
 	table.clear(Hub.Lifecycle.Connections)
 end
 
-local LibraryLoader = loadstring(game:HttpGet(LIBRARY_URL))()
+local LibraryLoader = loadstring(game:HttpGet(RepoFile("Library/OniumV4.luau")))()
 if not LibraryLoader then
 	return
 end
@@ -11960,12 +11962,12 @@ end
 -- 6. N3 HUB MODULAR UI BUILDER, TABS & LIFECYCLE
 -- ============================================================================
 
-local SaveManager = loadstring(game:HttpGet(MANAGER_REPO .. "SaveManager.luau"))()
-local ThemeManager = loadstring(game:HttpGet(MANAGER_REPO .. "ThemeManger.luau"))()
-local ServerManager = loadstring(game:HttpGet(MANAGER_REPO .. "ServerManger.luau"))()
+local SaveManager = loadstring(game:HttpGet(RepoFile("Manager/SaveManager.luau")))()
+local ThemeManager = loadstring(game:HttpGet(RepoFile("Manager/ThemeManger.luau")))()
+local ServerManager = loadstring(game:HttpGet(RepoFile("Manager/ServerManger.luau")))()
 local FpsManager = nil
 pcall(function()
-	local rawFpsSrc = game:HttpGet(FPS_MANAGER_URL)
+	local rawFpsSrc = game:HttpGet(RepoFile("Manager/FpsManger.luau"))
 	if type(rawFpsSrc) == "string" and #rawFpsSrc > 64 and not string.find(rawFpsSrc, "^404:") then
 		local chunkFn = loadstring(rawFpsSrc)
 		if type(chunkFn) == "function" then
@@ -13942,7 +13944,6 @@ if FpsManager then
 end
 if ServerManager then
 	ServerManager:SetLibrary(LibraryLoader)
-	ServerManager:SetAutoLoadSource(REPO_RAW .. "Games/Steal-An-Egg.luau")
 	ServerManager:ApplyToTab(SettingsTab)
 	Hub.ServerManager = ServerManager
 end

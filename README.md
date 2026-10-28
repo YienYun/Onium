@@ -111,9 +111,11 @@ Semua dependensi runtime diambil dari repo ini sendiri, lewat satu konstanta di 
 
 ```lua
 local REPO_RAW = "https://raw.githubusercontent.com/YienYun/Onium/refs/heads/<branch>/"
-local LIBRARY_URL = REPO_RAW .. "Library/OniumV4.luau"
-local MANAGER_REPO = REPO_RAW .. "Manager/"
-local FPS_MANAGER_URL = MANAGER_REPO .. "FpsManger.luau"
+local CACHE_BUST = "?v=" .. tostring(os.time())
+
+local function RepoFile(relativePath)
+	return REPO_RAW .. relativePath .. CACHE_BUST
+end
 ```
 
 | Pemakai | File |
@@ -124,7 +126,7 @@ local FPS_MANAGER_URL = MANAGER_REPO .. "FpsManger.luau"
 | `FpsManager` | `Manager/FpsManger.luau` |
 | `ServerManager` | `Manager/ServerManger.luau` |
 
-Ganti branch cukup di `REPO_RAW`; ganti nama file cukup di konstantanya masing-masing. Nama file di URL harus sama persis dengan nama file di repo (termasuk `FpsManger`/`ThemeManger`).
+Ganti branch cukup di `REPO_RAW`. `CACHE_BUST` menempelkan timestamp supaya CDN GitHub tidak menyajikan versi lama setelah push — tanpa itu, file yang baru diubah bisa masih terbaca versi sebelumnya sampai beberapa menit. Nama file di URL harus sama persis dengan nama file di repo (termasuk `FpsManger`/`ThemeManger`).
 
 ### Alur Load (loading screen)
 
@@ -178,18 +180,18 @@ Satu groupbox `Server` di tab Settings, urutan kontrol:
 
 | # | Kontrol | Tipe | Logika |
 | --- | --- | --- | --- |
-| 1 | Auto Load Script | Toggle | `queue_on_teleport` + `TeleportService:SetTeleportSetting` |
-| 2 | Server Hop Mode | Dropdown | urutan pilih server: most / random / least players |
-| 3 | Server Hop | Button | ambil daftar server, pilih, teleport, ulangi kalau penuh |
-| 4 | Job ID | Input | target Job ID, fallback ke clipboard |
-| 5 | Join Job ID | Button | `TeleportToPlaceInstance` ke Job ID tersebut |
-| 6 | Copy Current Job ID | Button | `game.JobId` ke input + clipboard |
-| 7 | Rejoin Server | Button | teleport balik ke server yang sekarang |
-| 8 | Auto Rejoin When Disconnect | Toggle | `GuiService.ErrorMessageChanged` + `RobloxPromptGui` |
+| 1 | Server Hop Mode | Dropdown | urutan pilih server: most / random / least players |
+| 2 | Server Hop | Button | ambil daftar server, pilih, teleport, ulangi kalau penuh |
+| 3 | Job ID | Input | target Job ID, fallback ke clipboard |
+| 4 | Join Job ID | Button | `TeleportToPlaceInstance` ke Job ID tersebut |
+| 5 | Copy Current Job ID | Button | `game.JobId` ke input + clipboard |
+| 6 | Rejoin Server | Button | teleport balik ke server yang sekarang |
+| 7 | Auto Rejoin When Disconnect | Toggle | `RobloxPromptGui.promptOverlay` + `ErrorMessage` |
 
 Perilaku yang perlu diingat:
 
-- **Auto Load Script butuh dukungan executor.** Script yang diantre membaca URL hub dari `ServerManager:SetAutoLoadSource(...)` (diisi `REPO_RAW` oleh hub), lalu menjalankan ulang hub di server baru. Kalau executor tidak punya fungsi queue, toggle otomatis balik off dan muncul notifikasi — bukan gagal diam-diam.
+- **Tidak ada auto execute.** Hub tidak mengantre script lewat `queue_on_teleport` dan tidak menyentuh `TeleportService:SetTeleportSetting`, jadi teleport murni hanya memindahkan server.
+- **Signal terbatas aman.** `GuiService.ErrorMessageChanged` punya capability `RobloxScript` dan ditolak di banyak executor. Semua connect di manager lewat helper `TryConnect`, jadi signal yang diblokir dilewati tanpa mematikan groupbox.
 - **Hop menyaring server penuh** (`playing < maxPlayers`) lewat endpoint publik `games.roblox.com`, menyimpan server yang gagal di `AvoidServers` agar tidak dipilih lagi, dan menyimpan cache daftar selama 60 detik.
 - **Auto rejoin mengabaikan** disconnect akibat teleport sendiri (60 detik), pesan `banned`, `same account`, `duplicate player`, dan pesan yang mengandung kata `teleport`.
 - **Input Job ID tidak ikut tersimpan** di config (`SaveManager:SetIgnoreIndexes`); toggle dan mode hop tetap tersimpan seperti kontrol lain.

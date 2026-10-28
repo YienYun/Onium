@@ -14,9 +14,7 @@ local ServerManager = {
 	Library = nil,
 	Icon = "server",
 	Disposed = false,
-	AutoLoadSource = nil,
 	Config = {
-		AutoLoadScript = true,
 		HopMode = "Least Players",
 		RejoinOnDisconnect = true,
 	},
@@ -26,8 +24,6 @@ local HOP_MODES = { "Most Players", "Random", "Least Players" }
 
 local SERVER_PAGE_URL = "https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=%s&excludeFullGames=true&limit=100"
 local JOB_ID_PATTERN = "%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x"
-local AUTO_LOAD_SETTING_KEY = "OniumAutoLoadScriptEnabled"
-local AUTO_LOAD_JOB_FLAG = "__OniumAutoLoadedJob"
 
 local SERVER_CACHE_SEC = 60
 local RANDOM_PAGE_SCAN = 3
@@ -55,7 +51,6 @@ local ServerState = {
 }
 
 local Connections = {}
-local QueuedSource = nil
 
 local function TrackConnection(connectionObj)
 	if connectionObj then
@@ -110,104 +105,7 @@ local function NormalizeJobId(rawText)
 end
 
 -- ============================================================================
--- 1. AUTO LOAD SCRIPT (QUEUE ON TELEPORT)
--- ============================================================================
-
-local function ResolveQueueOnTeleport()
-	if type(queue_on_teleport) == "function" then
-		return queue_on_teleport
-	end
-	if type(queueonteleport) == "function" then
-		return queueonteleport
-	end
-	if type(syn) == "table" and type(syn.queue_on_teleport) == "function" then
-		return syn.queue_on_teleport
-	end
-	if type(fluxus) == "table" and type(fluxus.queue_on_teleport) == "function" then
-		return fluxus.queue_on_teleport
-	end
-	return nil
-end
-
-local function BuildAutoLoadScript(sourceUrl)
-	return ([[
-repeat task.wait() until game:IsLoaded()
-local env = (typeof(getgenv) == "function" and getgenv()) or _G
-local teleport = game:GetService("TeleportService")
-local readOk, enabled = pcall(function()
-	return teleport:GetTeleportSetting("%s")
-end)
-if readOk and enabled == false then
-	return
-end
-if env.%s == game.JobId then
-	return
-end
-env.%s = game.JobId
-local fetchOk, body = pcall(function()
-	return game:HttpGet("%s")
-end)
-if not fetchOk or type(body) ~= "string" or #body < 128 then
-	return
-end
-local chunk = loadstring(body)
-if type(chunk) == "function" then
-	pcall(chunk)
-end
-]]):format(AUTO_LOAD_SETTING_KEY, AUTO_LOAD_JOB_FLAG, AUTO_LOAD_JOB_FLAG, sourceUrl)
-end
-
-local function ApplyAutoLoadSetting(isEnabled)
-	pcall(function()
-		TeleportService:SetTeleportSetting(AUTO_LOAD_SETTING_KEY, isEnabled == true)
-	end)
-end
-
-local function QueueAutoLoadScript()
-	local sourceUrl = ServerManager.AutoLoadSource
-	if type(sourceUrl) ~= "string" or sourceUrl == "" then
-		return false
-	end
-
-	local queueFn = ResolveQueueOnTeleport()
-	if not queueFn then
-		return false
-	end
-
-	if QueuedSource ~= sourceUrl then
-		if not pcall(queueFn, BuildAutoLoadScript(sourceUrl)) then
-			return false
-		end
-		QueuedSource = sourceUrl
-	end
-
-	return true
-end
-
-local function EnsureAutoLoadBeforeTeleport()
-	if not ServerManager.Config.AutoLoadScript then
-		return
-	end
-
-	ApplyAutoLoadSetting(true)
-
-	if QueuedSource == nil then
-		QueueAutoLoadScript()
-	end
-end
-
-local function SetAutoLoadEnabled(isEnabled)
-	ApplyAutoLoadSetting(isEnabled)
-
-	if not isEnabled then
-		return true
-	end
-
-	return QueueAutoLoadScript()
-end
-
--- ============================================================================
--- 2. SERVER LIST, FILTER & PICK
+-- 1. SERVER LIST, FILTER & PICK
 -- ============================================================================
 
 local function ReadServerPage(mode, cursor)
@@ -334,7 +232,7 @@ local function PickCandidate(servers, mode)
 end
 
 -- ============================================================================
--- 3. TELEPORT GUARD & FAILURE ROUTING
+-- 2. TELEPORT GUARD & FAILURE ROUTING
 -- ============================================================================
 
 local function IsTeleportLocked()
@@ -382,7 +280,7 @@ local function HandleTeleportFailure(teleportResult, errorMessage)
 end
 
 -- ============================================================================
--- 4. SERVER HOP
+-- 3. SERVER HOP
 -- ============================================================================
 
 local function HopOnce()
@@ -400,7 +298,6 @@ local function HopOnce()
 
 	ServerState.HopTarget = candidate.Id
 	ServerState.HopDenied = false
-	EnsureAutoLoadBeforeTeleport()
 
 	if not pcall(TeleportToServer, candidate.Id) then
 		ServerState.AvoidServers[candidate.Id] = true
@@ -459,7 +356,7 @@ local function StartServerHop()
 end
 
 -- ============================================================================
--- 5. JOB ID (JOIN, COPY) & MANUAL REJOIN
+-- 4. JOB ID (JOIN, COPY) & MANUAL REJOIN
 -- ============================================================================
 
 local JobIdInput = nil
@@ -509,7 +406,6 @@ local function JoinJobId()
 	end
 
 	LockTeleport()
-	EnsureAutoLoadBeforeTeleport()
 
 	if not pcall(TeleportToServer, jobId) then
 		UnlockTeleport()
@@ -535,7 +431,6 @@ local function RejoinServer()
 	end
 
 	LockTeleport()
-	EnsureAutoLoadBeforeTeleport()
 
 	local jobId = tostring(game.JobId or "")
 	local rejoinOk = pcall(function()
@@ -553,7 +448,7 @@ local function RejoinServer()
 end
 
 -- ============================================================================
--- 6. AUTO REJOIN WHEN DISCONNECT
+-- 5. AUTO REJOIN WHEN DISCONNECT
 -- ============================================================================
 
 local function ContainsAny(textValue, patterns)
@@ -597,7 +492,6 @@ local function HandleDisconnectMessage(rawMessage)
 	local serverClosed = ContainsAny(messageText, { "shut", "no longer", "closed" })
 	local jobId = tostring(game.JobId or "")
 
-	EnsureAutoLoadBeforeTeleport()
 	Notify("Auto Rejoin", serverClosed and "Server closed, joining another one." or "Disconnected, rejoining now.")
 
 	task.spawn(function()
@@ -695,28 +589,8 @@ local function WatchDisconnectPrompts()
 end
 
 -- ============================================================================
--- 7. UI SECTION
+-- 6. UI SECTION
 -- ============================================================================
-
-local AutoLoadToggle = nil
-
-local function OnAutoLoadChanged(isEnabled, toggleObject)
-	ServerManager.Config.AutoLoadScript = isEnabled == true
-
-	if SetAutoLoadEnabled(isEnabled == true) then
-		return
-	end
-
-	task.defer(function()
-		ApplyAutoLoadSetting(false)
-
-		if toggleObject and type(toggleObject.SetValue) == "function" then
-			pcall(toggleObject.SetValue, toggleObject, false)
-		end
-
-		Notify("Auto Load Unavailable", "This executor does not support queue on teleport.")
-	end)
-end
 
 function ServerManager:BuildServerSection(targetTab, useRightSide)
 	if not targetTab then
@@ -729,16 +603,6 @@ function ServerManager:BuildServerSection(targetTab, useRightSide)
 	end
 
 	local serverGroup = addGroupMethod(targetTab, "Server", self.Icon)
-
-	AutoLoadToggle = serverGroup:AddToggle("Toggle_Server_AutoLoadScript", {
-		Text = "Auto Load Script",
-		Default = self.Config.AutoLoadScript,
-		Tooltip = "Queues this hub so it reloads itself after every teleport",
-		Callback = function(isEnabled)
-			OnAutoLoadChanged(isEnabled, AutoLoadToggle)
-		end,
-	})
-	OnAutoLoadChanged(self.Config.AutoLoadScript, AutoLoadToggle)
 
 	serverGroup:AddDropdown("Dropdown_Server_HopMode", {
 		Text = "Server Hop Mode",
@@ -822,7 +686,7 @@ function ServerManager:ApplyToTab(targetTab)
 end
 
 -- ============================================================================
--- 8. PUBLIC API
+-- 7. PUBLIC API
 -- ============================================================================
 
 function ServerManager:Unload()
@@ -831,7 +695,6 @@ function ServerManager:Unload()
 	end
 
 	self.Disposed = true
-	self.Config.AutoLoadScript = false
 	self.Config.RejoinOnDisconnect = false
 	ServerState.HopRun += 1
 	ServerState.HopBusy = false
@@ -858,12 +721,6 @@ end
 function ServerManager:SetIcon(customIcon)
 	if type(customIcon) == "string" and customIcon ~= "" then
 		self.Icon = customIcon
-	end
-end
-
-function ServerManager:SetAutoLoadSource(sourceUrl)
-	if type(sourceUrl) == "string" and sourceUrl ~= "" then
-		self.AutoLoadSource = sourceUrl
 	end
 end
 
