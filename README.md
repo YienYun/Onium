@@ -10,7 +10,8 @@ Tujuan repo: satu sumber kebenaran yang rapi, mudah dibaca, mudah dimaintain, da
 
 | Path | Isi | Peran |
 | --- | --- | --- |
-| `Games/Steal-An-Egg.luau` | Hub utama game (single file, ±14.000 baris) | Kode produksi. Semua fitur, engine, dan UI hub ada di sini. |
+| `Games/Steal-An-Egg.luau` | Hub utama game (single file, ±15.100 baris) | Kode produksi. Semua fitur, engine, dan UI hub ada di sini. |
+| `Games/StealAnEgg/Prediction.luau` | Modul tab Predictor (±510 baris) | Modul terpisah: baca egg, format uang/berat/waktu, rich text gradient, dan kartu preview. Dimuat hub lewat URL. |
 | `Library/OniumV4.luau` | UI library hub (turunan Obsidian, ±17.800 baris) | Komponen window, tab, groupbox, dan element. |
 | `Manager/` | `FpsManger.luau`, `SaveManager.luau`, `ThemeManger.luau`, `ServerManger.luau` | Manager UI (performance, config, theme, server). Dimuat hub lewat URL, bukan dari sini. |
 | `Source/ChiliHub.luau` | Source hasil deobfuscate (Chili Hub V3, ±53.000 baris) | **Referensi baca saja.** Bukan bahan copy-paste. |
@@ -105,6 +106,7 @@ Untuk debug di executor, state yang sama juga tersedia di `getgenv().N3Hub_State
 | Admin | Kiri: Capture The Egg, Instant Steal Abuse, Cursed Island Wars — Kanan: Admin Treadmill, Minigame Eggs |
 | Quest | Kiri: Auto Butterfly — Kanan: Shooting Star |
 | Player | Kiri: ESP — Kanan: Movement, Character |
+| Predictor | Kiri: Egg Predictor |
 | Settings | Kiri: Performance (FpsManager), Themes (ThemeManager) — Kanan: Server (ServerManager), Configuration (SaveManager). Tidak ada groupbox manual di hub. |
 
 Setiap groupbox dibangun lewat satu fungsi `Hub.Features.Build*(group)`. Nama tombol mengikuti pola `Build + Nama Groupbox`, jadi wiring di bagian 6 tinggal satu baris per fitur.
@@ -142,6 +144,22 @@ Catatan implementasi:
 - `Knock` milik modul `CursedIslandWars/Input` dinonaktifkan selama auto play supaya knock dari lawan tidak membuat karakter ragdoll, lalu dipulihkan saat toggle dimatikan, event selesai, atau script di-unload.
 - Icon group memakai `Hub.Icons.Fights` (id stat Fights milik game) karena dex tidak menyimpan icon khusus Cursed Island Wars.
 
+### Tab Predictor
+
+Tab `Predictor` dibuat sebelum `Settings` dan seluruh logikanya ada di modul terpisah `Games/StealAnEgg/Prediction.luau` supaya file hub tidak membengkak. Hub hanya membuat tab, groupbox `Egg Predictor`, lalu memanggil `PredictionModule.Build(groupbox)`.
+
+| Kontrol | Perilaku |
+| --- | --- |
+| `Sort By` | `Value` (income per detik), `Rarity` (rank rarity), `Time Left` (sisa waktu tumbuh paling dekat). |
+| `Show Preview Card` | Menampilkan atau menyembunyikan kartu preview (`AddSpotlightCard`). |
+| Kartu preview | Gambar egg dari `EggRecords.EggIcon` + nama + rarity (gradient rarity library) + income ber-gradient + meta `$x/s • Rarity • xxx Kg • status/waktu`. |
+| `Egg Status` | `All`, `Ready`, `Growing`, `In Bag`. |
+| `Egg List` | Dropdown berisi egg dengan ikon (librari `ValueImages`); pilih satu untuk ditampilkan di kartu. |
+
+Sumber data semuanya dari modul game, bukan karangan: `EggState.ReadOwnerEggs` (daftar egg), `EggState.IsReadyToHatch`, `EggRecords.GrowthSecondsRemaining` / `GrowthDuration` / `GrowthSpeedMultiplier` / `WeightKg` / `EggIcon`, `Assets.Directory` (nama, rarity, `EarningRate`, icon), dan `Mutations.EarningsFor` (multiplier mutasi). Income memakai rumus Chili: `EarningRate * ScaleFactor(scale) * MutationMultiplier`.
+
+Catatan: library belum punya canvas seperti Chili, jadi kartu memakai element `AddSpotlightCard` bawaan (gambar + glow + teks), sedangkan efek gradient teks dibuat di modul lewat rich text `<font color>` per karakter (fungsi `Gradient`, `RainbowWord`, `Paint`).
+
 ### Sumber yang Di-fetch
 
 Semua dependensi runtime diambil dari repo ini sendiri, lewat satu konstanta di baris 16:
@@ -162,6 +180,7 @@ end
 | `ThemeManager` | `Manager/ThemeManger.luau` |
 | `FpsManager` | `Manager/FpsManger.luau` |
 | `ServerManager` | `Manager/ServerManger.luau` |
+| `PredictionModule` | `Games/StealAnEgg/Prediction.luau` |
 
 Ganti branch cukup di `REPO_RAW`. `CACHE_BUST` menempelkan timestamp supaya CDN GitHub tidak menyajikan versi lama setelah push — tanpa itu, file yang baru diubah bisa masih terbaca versi sebelumnya sampai beberapa menit. Nama file di URL harus sama persis dengan nama file di repo (termasuk `FpsManger`/`ThemeManger`).
 

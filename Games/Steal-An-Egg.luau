@@ -70,6 +70,8 @@ local Hub = {
 		CaptureTheEgg = "rbxassetid://103094823152347",
 		InstantSteal = "rbxassetid://137134884810647",
 		MinigameEggs = "rbxassetid://124390268104324",
+		Predictor = "rbxassetid://96168190157761",
+		EggPredictor = "rbxassetid://113114954725357",
 	},
 	Theme = {
 		PrefixHex = "#D946EF", -- N3 HUB Purple-Pink Accent for label prefixes ("Status:", etc.)
@@ -148,6 +150,7 @@ function Hub.Lifecycle.DisposeAll()
 end
 
 local LibraryLoader = loadstring(game:HttpGet(RepoFile("Library/OniumV4.luau")))()
+local PredictionModule = loadstring(game:HttpGet(RepoFile("Games/StealAnEgg/Prediction.luau")))()
 if not LibraryLoader then
 	return
 end
@@ -14878,6 +14881,7 @@ local EventTab = MainWindow:AddTab("Event", Hub.Icons.Event, "Halloween & Specia
 local AdminTab = MainWindow:AddTab("Admin", Hub.Icons.Admin, "Capture The Egg, Admin Treadmill, Instant Steal & Minigame Eggs")
 local QuestTab = MainWindow:AddTab("Quest", Hub.Icons.Quest, "Quests, Butterfly Bloom & Shooting Star")
 local PlayerTab = MainWindow:AddTab("Player", Hub.Icons.Player, "Movement, Character, Combat & Visuals")
+local PredictorTab = MainWindow:AddTab("Predictor", Hub.Icons.Predictor, "Egg Predictor & Growth Preview")
 local SettingsTab = MainWindow:AddTab("Settings", Hub.Icons.Settings, "System & Configuration")
 Hub.UI.Tabs.Farm = FarmTab
 Hub.UI.Tabs.Pets = PetsTab
@@ -14885,6 +14889,7 @@ Hub.UI.Tabs.Event = EventTab
 Hub.UI.Tabs.Admin = AdminTab
 Hub.UI.Tabs.Quest = QuestTab
 Hub.UI.Tabs.Player = PlayerTab
+Hub.UI.Tabs.Predictor = PredictorTab
 Hub.UI.Tabs.Settings = SettingsTab
 
 local FarmEggGroup = FarmTab:AddLeftGroupbox("Farm Eggs", Hub.Icons.Farm)
@@ -14910,6 +14915,7 @@ local ShootingStarGroup = QuestTab:AddRightGroupbox("Shooting Star", Hub.Icons.S
 local PlayerEspGroup = PlayerTab:AddLeftGroupbox("ESP", Hub.Icons.ESP)
 local PlayerMoveGroup = PlayerTab:AddRightGroupbox("Movement", Hub.Icons.Movement)
 local PlayerCharGroup = PlayerTab:AddRightGroupbox("Character", Hub.Icons.Character)
+local EggPredictorGroup = PredictorTab:AddLeftGroupbox("Egg Predictor", Hub.Icons.EggPredictor)
 
 Hub.UI.Groups.FarmEggs = FarmEggGroup
 Hub.UI.Groups.Progression = ProgressionGroup
@@ -14953,12 +14959,14 @@ Hub.Features.BuildMinigameEggs(MinigameEggsGroup)
 Hub.UI.Groups.ESP = PlayerEspGroup
 Hub.UI.Groups.Movement = PlayerMoveGroup
 Hub.UI.Groups.Character = PlayerCharGroup
+Hub.UI.Groups.EggPredictor = EggPredictorGroup
 
 Hub.Features.BuildAutoButterfly(AutoButterflyGroup)
 Hub.Features.BuildShootingStar(ShootingStarGroup)
 Hub.Features.BuildPlayerESP(PlayerEspGroup)
 Hub.Features.BuildPlayerMovement(PlayerMoveGroup)
 Hub.Features.BuildPlayerCharacter(PlayerCharGroup)
+PredictionModule.Build(EggPredictorGroup)
 
 -- Character Respawn & Anti-Ragdoll Guard Loop
 Hub.Lifecycle.TrackConnection(LocalPlayer.CharacterAdded:Connect(function()
@@ -15066,6 +15074,7 @@ LibraryLoader:OnUnload(function()
 
 	pcall(Hub.GhostDogFishing.Restart)
 	pcall(Hub.IslandWars.RestoreKnock)
+	pcall(PredictionModule.Stop)
 	pcall(Hub.HalloweenMonsters.SetAutoEnabled, false)
 	pcall(Hub.AutoMutate.SetAutoEnabled, false)
 	pcall(Engine.StopSafeZoneVisual)
