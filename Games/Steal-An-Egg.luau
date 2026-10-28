@@ -64,6 +64,7 @@ local Hub = {
 		Movement = "rbxassetid://78137530993637",
 		Character = "rbxassetid://128234882192727",
 		Settings = "rbxassetid://101403250204482",
+		Server = "server",
 	},
 	Theme = {
 		PrefixHex = "#D946EF", -- N3 HUB Purple-Pink Accent for label prefixes ("Status:", etc.)
@@ -11962,6 +11963,7 @@ end
 
 local SaveManager = loadstring(game:HttpGet(MANAGER_REPO .. "SaveManager.luau"))()
 local ThemeManager = loadstring(game:HttpGet(MANAGER_REPO .. "ThemeManger.luau"))()
+local ServerManager = loadstring(game:HttpGet(MANAGER_REPO .. "ServerManger.luau"))()
 local FpsManager = nil
 pcall(function()
 	local rawFpsSrc = game:HttpGet(FPS_MANAGER_URL)
@@ -13846,12 +13848,14 @@ local PetsTab = MainWindow:AddTab("Pets", Hub.Icons.Pets, "Pets & Egg Placement"
 local EventTab = MainWindow:AddTab("Event", Hub.Icons.Event, "Halloween & Special Events")
 local QuestTab = MainWindow:AddTab("Quest", Hub.Icons.Quest, "Quests, Butterfly Bloom & Shooting Star")
 local PlayerTab = MainWindow:AddTab("Player", Hub.Icons.Player, "Movement, Character, Combat & Visuals")
+local ServerTab = MainWindow:AddTab("Server", Hub.Icons.Server, "Server Hop, Job ID & Auto Rejoin")
 local SettingsTab = MainWindow:AddTab("Settings", Hub.Icons.Settings, "System & Configuration")
 Hub.UI.Tabs.Farm = FarmTab
 Hub.UI.Tabs.Pets = PetsTab
 Hub.UI.Tabs.Event = EventTab
 Hub.UI.Tabs.Quest = QuestTab
 Hub.UI.Tabs.Player = PlayerTab
+Hub.UI.Tabs.Server = ServerTab
 Hub.UI.Tabs.Settings = SettingsTab
 
 local FarmEggGroup = FarmTab:AddLeftGroupbox("Farm Eggs", Hub.Icons.Farm)
@@ -13933,17 +13937,23 @@ Hub.Lifecycle.SpawnLoop(0.25, function()
 	end
 end)
 
--- FpsManager, SaveManager & ThemeManager Setup
+-- FpsManager, SaveManager, ThemeManager & ServerManager Setup
 if FpsManager then
 	FpsManager:SetLibrary(LibraryLoader)
 	FpsManager:ApplyToTab(SettingsTab)
 	Hub.FpsManager = FpsManager
 end
+if ServerManager then
+	ServerManager:SetLibrary(LibraryLoader)
+	ServerManager:SetAutoLoadSource(REPO_RAW .. "Games/Steal-An-Egg.luau")
+	ServerManager:ApplyToTab(ServerTab)
+	Hub.ServerManager = ServerManager
+end
 if SaveManager and ThemeManager then
 	SaveManager:SetLibrary(LibraryLoader)
 	ThemeManager:SetLibrary(LibraryLoader)
 	SaveManager:IgnoreThemeSettings()
-	SaveManager:SetIgnoreIndexes({ "MenuKeybind" })
+	SaveManager:SetIgnoreIndexes({ "MenuKeybind", "Input_Server_JobId" })
 	ThemeManager:SetFolder("N3Hub")
 	SaveManager:SetFolder("N3Hub")
 	SaveManager:SetSubFolder("StealAnEgg")

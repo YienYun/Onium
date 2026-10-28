@@ -12,9 +12,9 @@ Tujuan repo: satu sumber kebenaran yang rapi, mudah dibaca, mudah dimaintain, da
 | --- | --- | --- |
 | `Games/Steal-An-Egg.luau` | Hub utama game (single file, ±14.000 baris) | Kode produksi. Semua fitur, engine, dan UI hub ada di sini. |
 | `Library/OniumV4.luau` | UI library hub (turunan Obsidian, ±17.800 baris) | Komponen window, tab, groupbox, dan element. |
-| `Manager/` | `FpsManger.luau`, `SaveManager.luau`, `ThemeManger.luau` | Manager tab Settings (performance, config, theme). Dimuat hub lewat URL, bukan dari sini. |
+| `Manager/` | `FpsManger.luau`, `SaveManager.luau`, `ThemeManger.luau`, `ServerManger.luau` | Manager UI (performance, config, theme, server). Dimuat hub lewat URL, bukan dari sini. |
 | `Source/ChiliHub.luau` | Source hasil deobfuscate (Chili Hub V3, ±53.000 baris) | **Referensi baca saja.** Bukan bahan copy-paste. |
-| `DexExploler/` | Catatan hasil eksplorasi game / Dex | Menunggu diisi. |
+| `DexExploler/` | Dump `ReplicatedStorage` game (±1.900 file, hasil Dex) | Referensi baca saja: nama module, remote, dan alur asli game. |
 | `README.md` | Dokumen ini | Peta arsitektur + aturan kerja. |
 
 Aturan singkat: `Games/` dan `Library/` adalah milik kita. `Source/` hanya dibaca untuk memahami mekanik game.
@@ -101,6 +101,7 @@ Untuk debug di executor, state yang sama juga tersedia di `getgenv().N3Hub_State
 | Event | Kiri: Pumpkin Boss, Ghost Dog & Fishing, The Hollow — Kanan: Phantom Express, Halloween Monsters |
 | Quest | Kiri: Auto Butterfly — Kanan: Shooting Star |
 | Player | Kiri: ESP — Kanan: Movement, Character |
+| Server | Kiri: Server (Auto Load Script, Hop Mode, Hop, Job ID, Join, Copy, Rejoin, Auto Rejoin) |
 | Settings | Diisi FpsManager, SaveManager, ThemeManager (tidak ada groupbox manual) |
 
 Setiap groupbox dibangun lewat satu fungsi `Hub.Features.Build*(group)`. Nama tombol mengikuti pola `Build + Nama Groupbox`, jadi wiring di bagian 6 tinggal satu baris per fitur.
@@ -122,6 +123,7 @@ local FPS_MANAGER_URL = MANAGER_REPO .. "FpsManger.luau"
 | `SaveManager` | `Manager/SaveManager.luau` |
 | `ThemeManager` | `Manager/ThemeManger.luau` |
 | `FpsManager` | `Manager/FpsManger.luau` |
+| `ServerManager` | `Manager/ServerManger.luau` |
 
 Ganti branch cukup di `REPO_RAW`; ganti nama file cukup di konstantanya masing-masing. Nama file di URL harus sama persis dengan nama file di repo (termasuk `FpsManger`/`ThemeManger`).
 
@@ -132,7 +134,7 @@ Ganti branch cukup di `REPO_RAW`; ganti nama file cukup di konstantanya masing-m
 | 1 | Load Engine | Service, namespace `Hub`, load library, loading screen |
 | 2 | Load Data Replica | Modul game + katalog data |
 | 3 | Load N3 Library | Network folder, remote, `Load All Requirements` |
-| 4 | Load All Requirements | Manager (Fps/Save/Theme), window, tab, groupbox, semua `Build*` |
+| 4 | Load All Requirements | Manager (Fps/Save/Theme/Server), window, tab, groupbox, semua `Build*` |
 | 5 | Verifying | Guard loop, manager setup, unload handler, `Library:Toggle(true)` |
 
 ---
@@ -160,7 +162,42 @@ Groupbox:AddLabel(text, doesWrap)
 
 ---
 
-## 4. Aturan Kerja
+## 4. Manager (`Manager/`)
+
+Empat manager dimuat terpisah dari hub dan punya pola API sama: `SetLibrary(library)` untuk mendaftar unload, lalu satu fungsi pemasangan ke tab.
+
+| Manager | Fungsi pasang | Isi |
+| --- | --- | --- |
+| FpsManager | `ApplyToTab(tab)` | FPS cap, optimizer, FPS & ping, disable 3D render, anti AFK |
+| SaveManager | `BuildConfigSection(tab)` | Simpan/muat config per game |
+| ThemeManager | `ApplyToTab(tab)` | Pilihan theme library |
+| ServerManager | `ApplyToTab(tab)` | Server hop, job ID, rejoin |
+
+### ServerManager
+
+Satu groupbox `Server` di tab Server, urutan kontrol:
+
+| # | Kontrol | Tipe | Logika |
+| --- | --- | --- | --- |
+| 1 | Auto Load Script | Toggle | `queue_on_teleport` + `TeleportService:SetTeleportSetting` |
+| 2 | Server Hop Mode | Dropdown | urutan pilih server: most / random / least players |
+| 3 | Server Hop | Button | ambil daftar server, pilih, teleport, ulangi kalau penuh |
+| 4 | Job ID | Input | target Job ID, fallback ke clipboard |
+| 5 | Join Job ID | Button | `TeleportToPlaceInstance` ke Job ID tersebut |
+| 6 | Copy Current Job ID | Button | `game.JobId` ke input + clipboard |
+| 7 | Rejoin Server | Button | teleport balik ke server yang sekarang |
+| 8 | Auto Rejoin When Disconnect | Toggle | `GuiService.ErrorMessageChanged` + `RobloxPromptGui` |
+
+Perilaku yang perlu diingat:
+
+- **Auto Load Script butuh dukungan executor.** Script yang diantre membaca URL hub dari `ServerManager:SetAutoLoadSource(...)` (diisi `REPO_RAW` oleh hub), lalu menjalankan ulang hub di server baru. Kalau executor tidak punya fungsi queue, toggle otomatis balik off dan muncul notifikasi — bukan gagal diam-diam.
+- **Hop menyaring server penuh** (`playing < maxPlayers`) lewat endpoint publik `games.roblox.com`, menyimpan server yang gagal di `AvoidServers` agar tidak dipilih lagi, dan menyimpan cache daftar selama 60 detik.
+- **Auto rejoin mengabaikan** disconnect akibat teleport sendiri (60 detik), pesan `banned`, `same account`, `duplicate player`, dan pesan yang mengandung kata `teleport`.
+- **Input Job ID tidak ikut tersimpan** di config (`SaveManager:SetIgnoreIndexes`); toggle dan mode hop tetap tersimpan seperti kontrol lain.
+
+---
+
+## 5. Aturan Kerja
 
 Kontrak yang dipakai di repo ini:
 
@@ -177,7 +214,7 @@ Kontrak yang dipakai di repo ini:
 
 ---
 
-## 5. Alur Verifikasi
+## 6. Alur Verifikasi
 
 Tidak ada build step. Siklusnya:
 
@@ -190,7 +227,7 @@ Yang wajib dicek setiap perubahan menyentuh bagian 5D: flag di `FarmConfig` haru
 
 ---
 
-## 6. Referensi ChiliHub
+## 7. Referensi ChiliHub
 
 `Source/ChiliHub.luau` adalah hasil deobfuscate: nama variabel sudah rusak (`mapTbl[46]`, `fnRef2`), struktur UI dan engine bercampur, dan banyak remote dipanggil dengan string literal.
 
@@ -202,7 +239,7 @@ Cara pakai yang benar:
 
 ---
 
-## 7. Catatan Terbuka
+## 8. Catatan Terbuka
 
 Hal yang perlu keputusan sebelum lanjut:
 
@@ -212,7 +249,7 @@ Hal yang perlu keputusan sebelum lanjut:
 
 ---
 
-## 8. Backlog
+## 9. Backlog
 
 Belum ada item. Fitur dikerjakan satu per satu setelah permintaan eksplisit, dicatat di sini saat mulai:
 
