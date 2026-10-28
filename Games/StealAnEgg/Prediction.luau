@@ -25,6 +25,9 @@ local EggStateModule = RequireGameModule("Client", "EggState")
 local EggRecordsModule = RequireGameModule("Shared", "Util", "EggRecords")
 local AssetsModule = RequireGameModule("Data", "Assets")
 local MutationsModule = RequireGameModule("Shared", "Modules", "Mutations")
+local SaveModule = RequireGameModule("Shared", "Save")
+local FuseKernelModule = RequireGameModule("Shared", "Util", "FuseKernel")
+local BalanceModule = RequireGameModule("Shared", "Flags", "GameplayBalance")
 
 local Prediction = {
 	SortOptions = { "Value", "Rarity", "Time Left" },
@@ -65,6 +68,9 @@ local COLORS = {
 	InBag = { Color3.fromRGB(160, 225, 255), Color3.fromRGB(60, 140, 255) },
 	TileTint = Color3.fromRGB(40, 40, 60),
 	ShadowTint = Color3.fromRGB(20, 18, 34),
+	Hint = Color3.fromRGB(159, 184, 255),
+	Separator = Color3.fromRGB(122, 140, 192),
+	Clock = Color3.fromRGB(255, 194, 77),
 }
 
 local FILTERS = {
@@ -1506,10 +1512,729 @@ function Prediction.Build(groupbox)
 	end)
 end
 
+local FUSE_SLOTS = 3
+local FUSE_CARD_HEIGHT = 132
+local FUSE_ART_SIZE = 100
+local FUSE_SLOT_HEIGHT = 62
+local FUSE_BAND_ROWS = 3
+local BASE_EGG_ICON = "rbxassetid://116524274262912"
+
+local SCALE_BAND_COLORS = {
+	{ Min = 0, Color = Color3.fromRGB(143, 152, 168) },
+	{ Min = 0.3, Color = Color3.fromRGB(198, 205, 218) },
+	{ Min = 0.85, Color = Color3.fromRGB(255, 255, 255) },
+	{ Min = 1.45, Color = Color3.fromRGB(124, 255, 158) },
+	{ Min = 1.9, Color = Color3.fromRGB(79, 224, 255) },
+	{ Min = 2.85, Color = Color3.fromRGB(111, 160, 255) },
+	{ Min = 3.8, Color = Color3.fromRGB(192, 139, 255) },
+	{ Min = 5.8, Color = Color3.fromRGB(255, 154, 61) },
+	{ Min = 9.5, Color = Color3.fromRGB(255, 92, 92) },
+	{ Min = 12, Color = Color3.fromRGB(255, 211, 77) },
+	{ Min = 20, Color = Color3.fromRGB(255, 77, 232) },
+}
+
+local function ScaleBandColor(bandMin)
+	local bestMin, color = -math.huge, COLORS.Text
+	for _, band in ipairs(SCALE_BAND_COLORS) do
+		if bandMin + 0.001 >= band.Min and band.Min > bestMin then
+			bestMin, color = band.Min, band.Color
+		end
+	end
+	return color
+end
+
+local function FormatMoney(value)
+	local suffixes = { "", "K", "M", "B", "T", "Qa", "Qi" }
+	local amount = tonumber(value) or 0
+	local index = 1
+	while math.abs(amount) >= 1000 and index < #suffixes do
+		amount = amount / 1000
+		index = index + 1
+	end
+	if index == 1 then
+		return string.format("$%d", math.floor(amount))
+	end
+	return string.format("$%.2f%s", amount, suffixes[index])
+end
+
+local function ReadScaleBands()
+	if type(BalanceModule) == "table" and type(BalanceModule.Eggs) == "table" then
+		local bands = BalanceModule.Eggs.SCALE_BANDS
+		if type(bands) == "table" and #bands > 0 then
+			return bands
+		end
+	end
+	if type(EggRecordsModule) == "table" and type(EggRecordsModule.DrawAssetScale) == "function" then
+		local hasDebug = type(debug) == "table" and type(debug.getupvalues) == "function"
+		if hasDebug then
+			local callOk, upvalues = pcall(debug.getupvalues, EggRecordsModule.DrawAssetScale)
+			if callOk and type(upvalues) == "table" then
+				for _, value in pairs(upvalues) do
+					local first = type(value) == "table" and value[1] or nil
+					if type(first) == "table" and type(first.min) == "number" and type(first.weight) == "number" then
+						return value
+					end
+				end
+			end
+		end
+	end
+	return nil
+end
+
+local function BandWeightBias(scales, bandMin, bandMax)
+	if type(FuseKernelModule) == "table" and type(FuseKernelModule.BandWeightBias) == "function" then
+		local callOk, bias = pcall(FuseKernelModule.BandWeightBias, scales, bandMin, bandMax)
+		if callOk and type(bias) == "number" then
+			return bias
+		end
+	end
+	local average = (scales[1] + scales[2] + scales[3]) / 3
+	local biasStrength = 0.6
+	if type(BalanceModule) == "table" and type(BalanceModule.Fusion) == "table" then
+		biasStrength = tonumber(BalanceModule.Fusion.BIAS_STRENGTH) or biasStrength
+	end
+	return math.exp(
+		math.log(math.max(average, 1e-6)) / math.log(2) * (math.log((bandMin + bandMax) / 2) / math.log(2)) * biasStrength
+	)
+end
+
+local function PredictWeight(category, scale)
+	if type(EggRecordsModule) == "table" and type(EggRecordsModule.WeightKgForScale) == "function" then
+		local callOk, weight = pcall(EggRecordsModule.WeightKgForScale, category, scale)
+		if callOk and type(weight) == "number" then
+			return weight
+		end
+	end
+	return nil
+end
+
+local function ReadFuseState()
+	local profile = nil
+	if type(SaveModule) == "table" and type(SaveModule.Peek) == "function" then
+		local callOk, peeked = pcall(SaveModule.Peek, LocalPlayer)
+		if callOk and type(peeked) == "table" then
+			profile = peeked
+		end
+	end
+	if type(profile) ~= "table" then
+		return { Items = {}, Locked = false, Duration = 0, Reward = false }
+	end
+
+	local inventory = type(profile.Inventory) == "table" and profile.Inventory or {}
+	local slots = type(profile.FusionSlots) == "table" and profile.FusionSlots or {}
+	local items = {}
+	for index = 1, FUSE_SLOTS do
+		local uid = slots[index]
+		local record = uid ~= nil and inventory[uid] or nil
+		if type(record) == "table" then
+			table.insert(items, {
+				Category = tostring(record.Category),
+				Scale = tonumber(record.Scale) or 1,
+				Mutations = type(record.Mutations) == "table" and record.Mutations or {},
+			})
+		end
+	end
+
+	return {
+		Items = items,
+		Locked = profile.FusionLocked == true,
+		Duration = tonumber(profile.FusionDuration) or 0,
+		Reward = profile.FusionEggReward ~= nil and profile.FusionEggReward ~= false,
+	}
+end
+
+local function ReadFusePrice(items)
+	if #items ~= FUSE_SLOTS then
+		return nil
+	end
+	if type(FuseKernelModule) == "table" and type(FuseKernelModule.PriceFor) == "function" then
+		local callOk, price = pcall(FuseKernelModule.PriceFor, items)
+		if callOk and type(price) == "number" then
+			return price
+		end
+	end
+	return nil
+end
+
+local function PredictFuse(state)
+	local items = state.Items
+	if #items == 0 then
+		return nil
+	end
+
+	local assetInfo = ReadAssetInfo(items[1].Category)
+	local scales, totalScale = {}, 0
+	local mutation, mutationId = nil, nil
+	local bestMultiplier = 1
+	for _, item in ipairs(items) do
+		table.insert(scales, item.Scale)
+		totalScale = totalScale + item.Scale
+		for _, rawMutation in ipairs(item.Mutations) do
+			local multiplier = ReadMutationMultiplier({ rawMutation })
+			if multiplier > bestMultiplier then
+				bestMultiplier = multiplier
+				mutation = ReadMutation(rawMutation)
+				mutationId = tostring(rawMutation)
+			end
+		end
+	end
+
+	local prediction = {
+		Items = items,
+		Asset = assetInfo,
+		Category = items[1].Category,
+		AverageScale = totalScale / #items,
+		Mutation = mutation,
+		MutationId = mutationId,
+		Price = ReadFusePrice(items),
+		Bands = {},
+		BestBand = nil,
+	}
+
+	local bands = ReadScaleBands()
+	if bands and #scales == FUSE_SLOTS then
+		local weighted = {}
+		local totalWeight = 0
+		for _, band in ipairs(bands) do
+			local weight = band.weight * BandWeightBias(scales, band.min, band.max)
+			totalWeight = totalWeight + weight
+			table.insert(weighted, { Min = band.min, Max = band.max, Weight = weight })
+		end
+		for _, band in ipairs(weighted) do
+			local share = totalWeight > 0 and band.Weight / totalWeight * 100 or 0
+			local mutationList = mutationId and { mutationId } or {}
+			local incomeMin = assetInfo and math.max(math.floor(assetInfo.EarningRate * ScaleFactor(band.Min) * ReadMutationMultiplier(mutationList) + 0.5), 1) or 0
+			local incomeMax = assetInfo and math.max(math.floor(assetInfo.EarningRate * ScaleFactor(band.Max) * ReadMutationMultiplier(mutationList) + 0.5), 1) or 0
+			table.insert(prediction.Bands, {
+				Min = band.Min,
+				Max = band.Max,
+				Share = share,
+				Color = ScaleBandColor(band.Min),
+				WeightMin = PredictWeight(items[1].Category, band.Min),
+				WeightMax = PredictWeight(items[1].Category, band.Max),
+				IncomeMin = incomeMin,
+				IncomeMax = incomeMax,
+			})
+		end
+		table.sort(prediction.Bands, function(left, right)
+			return left.Share > right.Share
+		end)
+		prediction.BestBand = prediction.Bands[1]
+	end
+
+	return prediction
+end
+
+local function FuseStatus(state, prediction)
+	if state.Reward then
+		return "READY TO CLAIM", 1, COLORS.Ready, true
+	elseif state.Locked then
+		local remaining = 0
+		if state.Duration > 1000000000 then
+			remaining = math.max(state.Duration - Workspace:GetServerTimeNow(), 0)
+		end
+		return string.format("FUSING  %s", FormatRemaining(remaining)), 1, COLORS.Growing, true
+	end
+	local count = prediction and #prediction.Items or 0
+	if count == 0 then
+		return "MACHINE EMPTY", 0, COLORS.InBag, false
+	end
+	return string.format("%d/%d LOADED", count, FUSE_SLOTS), count / FUSE_SLOTS, COLORS.InBag, true
+end
+
+local function CreateFusePreview(parent, theme)
+	local frame = New("Frame", {
+		Name = "FusePreview",
+		BackgroundColor3 = theme.Surface,
+		BackgroundTransparency = 0.1,
+		BorderSizePixel = 0,
+		LayoutOrder = 1,
+		Size = UDim2.new(1, -CONTAINER_PADDING * 2 - CARD_MARGIN * 2, 0, FUSE_CARD_HEIGHT),
+		Parent = parent,
+	}, {
+		New("UICorner", { CornerRadius = UDim.new(0, 11) }),
+	})
+
+	local glowStroke = New("UIStroke", {
+		Color = COLORS.Text,
+		Thickness = 1.5,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		Parent = frame,
+	})
+	AddShimmer(glowStroke, 0, 35)
+
+	local art = New("Frame", {
+		BackgroundColor3 = COLORS.Text,
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+		Position = UDim2.fromOffset(8, 8),
+		Size = UDim2.fromOffset(FUSE_ART_SIZE, FUSE_ART_SIZE),
+		Parent = frame,
+	}, {
+		New("UICorner", { CornerRadius = UDim.new(0, 8) }),
+		New("ImageLabel", {
+			BackgroundTransparency = 1,
+			Image = CARD_TILE_ASSET,
+			ImageColor3 = COLORS.TileTint,
+			ImageTransparency = 0.86,
+			ScaleType = Enum.ScaleType.Tile,
+			TileSize = UDim2.fromScale(0.34, 0.42),
+			Size = UDim2.fromScale(1, 1),
+		}),
+	})
+
+	local eggShadow = New("ImageLabel", {
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.88),
+		Size = UDim2.fromScale(0.56, 0.13),
+		Image = PREVIEW_SHADOW_ASSET,
+		ImageColor3 = COLORS.ShadowTint,
+		ImageTransparency = 0.55,
+		ScaleType = Enum.ScaleType.Stretch,
+		Parent = art,
+	})
+	eggShadow.ZIndex = 1
+
+	local eggImage = New("ImageLabel", {
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.47),
+		Size = UDim2.fromScale(0.78, 0.78),
+		Image = BASE_EGG_ICON,
+		ScaleType = Enum.ScaleType.Fit,
+		ZIndex = 2,
+		Parent = art,
+	})
+
+	local predictionChip = New("Frame", {
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 0.35,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(4, 4),
+		Size = UDim2.fromOffset(0, 13),
+		AutomaticSize = Enum.AutomaticSize.X,
+		ZIndex = 4,
+		Parent = art,
+	}, {
+		New("UICorner", { CornerRadius = UDim.new(0.5, 0) }),
+		New("UIPadding", {
+			PaddingLeft = UDim.new(0, 4),
+			PaddingRight = UDim.new(0, 4),
+		}),
+		New("TextLabel", {
+			Name = "Caption",
+			BackgroundTransparency = 1,
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.fromScale(0, 1),
+			Text = "PREDICTED",
+			TextColor3 = COLORS.Text,
+			TextSize = 8,
+			ZIndex = 5,
+		}),
+	})
+	UseDisplayFont(predictionChip.Caption)
+
+	local bodyX = 8 + FUSE_ART_SIZE + 12
+	local body = New("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(bodyX, 8),
+		Size = UDim2.new(1, -(bodyX + 8), 0, FUSE_ART_SIZE),
+		Parent = frame,
+	})
+
+	local nameLabel = CreateLabel(body, {
+		Position = UDim2.fromOffset(0, 4),
+		Size = UDim2.new(1, 0, 0, 20),
+		Text = "No fusion",
+		TextSize = 16,
+		TextColor3 = COLORS.Subtext,
+	})
+
+	local rarityLabel = CreateLabel(body, {
+		Position = UDim2.fromOffset(0, 24),
+		Size = UDim2.new(1, 0, 0, 12),
+		TextSize = 9,
+	})
+
+	local mutationLabel = CreateLabel(body, {
+		Position = UDim2.fromOffset(0, 36),
+		Size = UDim2.new(1, 0, 0, 12),
+		TextSize = 9,
+		RichText = true,
+	})
+
+	local valueLabel = CreateLabel(body, {
+		Position = UDim2.fromOffset(0, 49),
+		Size = UDim2.new(1, 0, 0, 19),
+		TextSize = 16,
+	})
+	PaintGradient(valueLabel, "TextPaint", ColorSequence.new(COLORS.IncomeTop, COLORS.IncomeBottom), 90)
+
+	local statsRow = New("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(0, 68),
+		Size = UDim2.new(1, 0, 0, 13),
+		Parent = body,
+	}, {
+		New("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Padding = UDim.new(0, 7),
+		}),
+	})
+
+	local scaleLabel = CreateLabel(statsRow, {
+		AutomaticSize = Enum.AutomaticSize.X,
+		LayoutOrder = 1,
+		Size = UDim2.fromScale(0, 1),
+		TextSize = 9,
+	})
+	PaintGradient(scaleLabel, "TextPaint", ColorSequence.new(COLORS.ScaleTop, COLORS.ScaleBottom), 90)
+
+	local weightLabel = CreateLabel(statsRow, {
+		AutomaticSize = Enum.AutomaticSize.X,
+		LayoutOrder = 2,
+		Size = UDim2.fromScale(0, 1),
+		TextSize = 9,
+	})
+	PaintGradient(weightLabel, "TextPaint", ColorSequence.new(COLORS.WeightTop, COLORS.WeightBottom), 90)
+
+	local bar = CreateProgressBar(body, 14, 9, theme)
+	bar.Track.Position = UDim2.fromOffset(0, 83)
+	bar.Track.Size = UDim2.new(1, 0, 0, 14)
+
+	return {
+		Frame = frame,
+		Art = art,
+		Egg = eggImage,
+		Chip = predictionChip,
+		Update = function(state, prediction)
+			local statusText, progress, colors, showChip = FuseStatus(state, prediction)
+			local assetInfo = prediction and prediction.Asset or nil
+			local isFusing = showChip
+
+			bar.Gradient.Color = ColorSequence.new(colors[1], colors[2])
+			bar.Fill.Size = UDim2.fromScale(progress, 1)
+			bar.Text.Text = statusText
+			bar.Chip.Visible = true
+
+			predictionChip.Visible = isFusing
+			eggImage.Image = assetInfo and assetInfo.EggIcon ~= "" and assetInfo.EggIcon or BASE_EGG_ICON
+			eggImage.Size = isFusing and UDim2.fromScale(0.82, 0.82) or UDim2.fromScale(0.66, 0.66)
+
+			if assetInfo then
+				PaintGradient(art, "RarityPaint", BuildArtSequence(assetInfo), 90)
+				nameLabel.Text = assetInfo.Name
+				PaintRarityText(nameLabel, assetInfo, true)
+				rarityLabel.Text = string.upper(assetInfo.Rarity)
+				PaintRarityText(rarityLabel, assetInfo, false)
+			else
+				PaintGradient(art, "RarityPaint", ColorSequence.new(theme.Surface, theme.Surface), 90)
+				nameLabel.Text = "No fusion"
+				nameLabel.TextColor3 = COLORS.Subtext
+				rarityLabel.Text = ""
+			end
+
+			local mutationText = prediction and prediction.Mutation and BuildMutationText({ prediction.Mutation }) or ""
+			mutationLabel.Text = mutationText
+			mutationLabel.Visible = mutationText ~= ""
+
+			local bestBand = prediction and prediction.BestBand or nil
+			if bestBand then
+				valueLabel.Text = FormatRate(bestBand.IncomeMin) .. " ~ " .. FormatRate(bestBand.IncomeMax)
+				scaleLabel.Text = string.format("%.2fx - %.2fx", bestBand.Min, bestBand.Max)
+				if bestBand.WeightMin and bestBand.WeightMax then
+					weightLabel.Text = string.format(
+						"%s - %s",
+						FormatWeight(bestBand.WeightMin),
+						FormatWeight(bestBand.WeightMax)
+					)
+				else
+					weightLabel.Text = ""
+				end
+			else
+				valueLabel.Text = ""
+				scaleLabel.Text = prediction and string.format("x%.2f", prediction.AverageScale) or ""
+				local weight = prediction and PredictWeight(prediction.Category, prediction.AverageScale) or nil
+				weightLabel.Text = weight and FormatWeight(weight) or ""
+			end
+		end,
+	}
+end
+
+local function CreateFuseSlots(parent, theme)
+	local holder = New("Frame", {
+		Name = "FuseSlots",
+		BackgroundTransparency = 1,
+		LayoutOrder = 2,
+		Size = UDim2.new(1, -CONTAINER_PADDING * 2 - CARD_MARGIN * 2, 0, FUSE_SLOT_HEIGHT),
+		Parent = parent,
+	}, {
+		New("UIGridLayout", {
+			CellSize = UDim2.new(1 / 3, -4, 0, FUSE_SLOT_HEIGHT - CARD_MARGIN * 2),
+			CellPadding = UDim2.fromOffset(4, 0),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
+
+	local cards = {}
+	for index = 1, FUSE_SLOTS do
+		local card = New("Frame", {
+			BackgroundColor3 = theme.Surface,
+			BackgroundTransparency = 0.1,
+			BorderSizePixel = 0,
+			LayoutOrder = index,
+			Size = UDim2.fromOffset(90, FUSE_SLOT_HEIGHT - CARD_MARGIN * 2),
+			Parent = holder,
+		}, {
+			New("UICorner", { CornerRadius = UDim.new(0, 8) }),
+			New("UIStroke", {
+				Color = theme.Border,
+				Thickness = 1,
+				Transparency = 0.3,
+				ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+			}),
+		})
+
+		New("Frame", {
+			BackgroundColor3 = COLORS.Track,
+			BackgroundTransparency = 0.3,
+			BorderSizePixel = 0,
+			Position = UDim2.fromOffset(4, 4),
+			Size = UDim2.fromOffset(26, 26),
+			Parent = card,
+		}, {
+			New("UICorner", { CornerRadius = UDim.new(0, 6) }),
+			New("ImageLabel", {
+				Name = "Icon",
+				BackgroundTransparency = 1,
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(0.5, 0.5),
+				Size = UDim2.fromScale(0.86, 0.86),
+				Image = "",
+				ScaleType = Enum.ScaleType.Fit,
+			}),
+		})
+
+		local slotLabel = CreateLabel(card, {
+			Position = UDim2.fromOffset(4, 3),
+			Size = UDim2.new(1, -8, 0, 10),
+			Text = string.format("SLOT %d", index),
+			TextSize = 8,
+			TextColor3 = COLORS.Subtext,
+			TextXAlignment = Enum.TextXAlignment.Right,
+		})
+
+		local nameLabel = CreateLabel(card, {
+			Position = UDim2.fromOffset(33, 6),
+			Size = UDim2.new(1, -37, 0, 12),
+			TextSize = 9,
+		})
+
+		local detailLabel = CreateLabel(card, {
+			Position = UDim2.fromOffset(4, 33),
+			Size = UDim2.new(1, -8, 0, 11),
+			TextSize = 8,
+			RichText = true,
+		})
+
+		local incomeLabel = CreateLabel(card, {
+			Position = UDim2.fromOffset(4, 44),
+			Size = UDim2.new(1, -8, 0, 11),
+			TextSize = 8,
+		})
+		PaintGradient(incomeLabel, "TextPaint", ColorSequence.new(COLORS.IncomeTop, COLORS.IncomeBottom), 90)
+
+		table.insert(cards, {
+			Frame = card,
+			Icon = card:FindFirstChild("Icon", true),
+			Slot = slotLabel,
+			Name = nameLabel,
+			Detail = detailLabel,
+			Income = incomeLabel,
+		})
+	end
+
+	return {
+		Frame = holder,
+		Update = function(prediction)
+			for index, card in ipairs(cards) do
+				local item = prediction and prediction.Items[index] or nil
+				if item then
+					local assetInfo = prediction.Asset
+					card.Icon.Image = assetInfo and assetInfo.PetIcon or ""
+					card.Name.Text = assetInfo and assetInfo.Name or item.Category
+					card.Name.TextColor3 = COLORS.Text
+					local mutationText = BuildMutationText(ReadMutations(item.Mutations))
+					card.Detail.Text = string.format(
+						'<font color="#%s">%.2fx</font>%s',
+						COLORS.ScaleTop:ToHex(),
+						item.Scale,
+						mutationText ~= "" and ("  " .. mutationText) or ""
+					)
+					local income = 0
+					if assetInfo then
+						income = math.max(
+							math.floor(
+								assetInfo.EarningRate * ScaleFactor(item.Scale) * ReadMutationMultiplier(item.Mutations) + 0.5
+							),
+							1
+						)
+					end
+					card.Income.Text = FormatRate(income)
+				else
+					card.Icon.Image = ""
+					card.Name.Text = "Empty"
+					card.Name.TextColor3 = COLORS.Subtext
+					card.Detail.Text = ""
+					card.Income.Text = ""
+				end
+				card.Slot.Text = string.format("SLOT %d", index)
+			end
+		end,
+	}
+end
+
+local function CreateFuseBands(parent, theme)
+	local holder = New("Frame", {
+		Name = "FuseBands",
+		BackgroundTransparency = 1,
+		LayoutOrder = 3,
+		Size = UDim2.new(1, -CONTAINER_PADDING * 2 - CARD_MARGIN * 2, 0, 0),
+		Parent = parent,
+	}, {
+		New("UIListLayout", {
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Padding = UDim.new(0, 2),
+		}),
+	})
+
+	local title = CreateLabel(holder, {
+		LayoutOrder = 1,
+		Size = UDim2.new(1, 0, 0, 12),
+		Text = "PREDICTED SIZE",
+		TextSize = 8,
+		TextColor3 = COLORS.Hint,
+	})
+
+	local rows = {}
+	for index = 1, FUSE_BAND_ROWS do
+		table.insert(
+			rows,
+			CreateLabel(holder, {
+				LayoutOrder = 1 + index,
+				Size = UDim2.new(1, 0, 0, 12),
+				TextSize = 8,
+				RichText = true,
+			})
+		)
+	end
+
+	local costLabel = CreateLabel(holder, {
+		LayoutOrder = FUSE_BAND_ROWS + 2,
+		Size = UDim2.new(1, 0, 0, 12),
+		TextSize = 8,
+		RichText = true,
+	})
+
+	local separator = New("Frame", {
+		LayoutOrder = FUSE_BAND_ROWS + 3,
+		BackgroundColor3 = COLORS.Border,
+		BackgroundTransparency = 0.55,
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, 0, 0, 1),
+		Parent = holder,
+	})
+	separator.Name = "Separator"
+
+	holder.Size = UDim2.new(holder.Size.X.Scale, holder.Size.X.Offset, 0, 12 + FUSE_BAND_ROWS * 14 + 14 + 4)
+
+	return {
+		Frame = holder,
+		Title = title,
+		Update = function(prediction)
+			for index, row in ipairs(rows) do
+				local band = prediction and prediction.Bands[index] or nil
+				if band then
+					row.Visible = true
+					row.Text = string.format(
+						'<b><font color="#%s">%.2fx - %.2fx</font></b>  <font color="#%s">•</font>  <font color="#%s">%.1f%%</font>%s',
+						band.Color:ToHex(),
+						band.Min,
+						band.Max,
+						COLORS.Separator:ToHex(),
+						COLORS.IncomeTop:ToHex(),
+						band.Share,
+						band.WeightMin and band.WeightMax and string.format(
+							'  <font color="#%s">•</font>  <font color="#%s">%s - %s</font>',
+							COLORS.Separator:ToHex(),
+							COLORS.WeightTop:ToHex(),
+							FormatWeight(band.WeightMin),
+							FormatWeight(band.WeightMax)
+						) or ""
+					)
+				else
+					row.Visible = index == 1
+					if index == 1 then
+						row.Text = string.format(
+							'<font color="#%s">Load %d of %d pets to see the odds</font>',
+							COLORS.Hint:ToHex(),
+							math.max(FUSE_SLOTS - (prediction and #prediction.Items or 0), 0),
+							FUSE_SLOTS
+						)
+					end
+				end
+			end
+
+			local price = prediction and prediction.Price or nil
+			costLabel.Text = string.format(
+				'<font color="#%s">Fuse Cost</font>  <b><font color="#%s">%s</font></b>',
+				COLORS.Hint:ToHex(),
+				COLORS.Clock:ToHex(),
+				price and FormatMoney(price) or "-"
+			)
+		end,
+	}
+end
+
+function Prediction.BuildFuse(groupbox)
+	Prediction.FuseGroupbox = groupbox
+	local theme = ReadTheme(groupbox)
+	local container = groupbox.Container
+
+	local preview = CreateFusePreview(container, theme)
+	local slots = CreateFuseSlots(container, theme)
+	local bands = CreateFuseBands(container, theme)
+
+	groupbox:Resize()
+
+	Prediction.FuseNextRefreshAt = 0
+
+	Prediction.FuseConnection = RunService.Heartbeat:Connect(function()
+		local now = os.clock()
+		if now < Prediction.FuseNextRefreshAt then
+			return
+		end
+		Prediction.FuseNextRefreshAt = now + 1
+
+		local state = ReadFuseState()
+		local prediction = PredictFuse(state)
+		preview.Update(state, prediction)
+		slots.Update(prediction)
+		bands.Update(prediction)
+	end)
+end
+
 function Prediction.Stop()
 	if Prediction.Connection then
 		Prediction.Connection:Disconnect()
 		Prediction.Connection = nil
+	end
+	if Prediction.FuseConnection then
+		Prediction.FuseConnection:Disconnect()
+		Prediction.FuseConnection = nil
 	end
 end
 

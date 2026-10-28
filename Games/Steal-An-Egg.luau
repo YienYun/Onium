@@ -14881,7 +14881,7 @@ local EventTab = MainWindow:AddTab("Event", Hub.Icons.Event, "Halloween & Specia
 local AdminTab = MainWindow:AddTab("Admin", Hub.Icons.Admin, "Capture The Egg, Admin Treadmill, Instant Steal & Minigame Eggs")
 local QuestTab = MainWindow:AddTab("Quest", Hub.Icons.Quest, "Quests, Butterfly Bloom & Shooting Star")
 local PlayerTab = MainWindow:AddTab("Player", Hub.Icons.Player, "Movement, Character, Combat & Visuals")
-local PredictorTab = MainWindow:AddTab("Predictor", Hub.Icons.Predictor, "Egg Predictor & Growth Preview")
+local PredictorTab = MainWindow:AddTab("Predictor", Hub.Icons.Predictor, "Egg Predictor, Fuse Predictor & Growth Preview")
 local SettingsTab = MainWindow:AddTab("Settings", Hub.Icons.Settings, "System & Configuration")
 Hub.UI.Tabs.Farm = FarmTab
 Hub.UI.Tabs.Pets = PetsTab
@@ -14916,6 +14916,7 @@ local PlayerEspGroup = PlayerTab:AddLeftGroupbox("ESP", Hub.Icons.ESP)
 local PlayerMoveGroup = PlayerTab:AddRightGroupbox("Movement", Hub.Icons.Movement)
 local PlayerCharGroup = PlayerTab:AddRightGroupbox("Character", Hub.Icons.Character)
 local EggPredictorGroup = PredictorTab:AddLeftGroupbox("Egg Predictor", Hub.Icons.EggPredictor)
+local FusePredictorGroup = PredictorTab:AddRightGroupbox("Fuse Predictor", Hub.Icons.Fuse)
 
 Hub.UI.Groups.FarmEggs = FarmEggGroup
 Hub.UI.Groups.Progression = ProgressionGroup
@@ -14960,6 +14961,7 @@ Hub.UI.Groups.ESP = PlayerEspGroup
 Hub.UI.Groups.Movement = PlayerMoveGroup
 Hub.UI.Groups.Character = PlayerCharGroup
 Hub.UI.Groups.EggPredictor = EggPredictorGroup
+Hub.UI.Groups.FusePredictor = FusePredictorGroup
 
 Hub.Features.BuildAutoButterfly(AutoButterflyGroup)
 Hub.Features.BuildShootingStar(ShootingStarGroup)
@@ -14967,6 +14969,7 @@ Hub.Features.BuildPlayerESP(PlayerEspGroup)
 Hub.Features.BuildPlayerMovement(PlayerMoveGroup)
 Hub.Features.BuildPlayerCharacter(PlayerCharGroup)
 PredictionModule.Build(EggPredictorGroup)
+PredictionModule.BuildFuse(FusePredictorGroup)
 
 -- Character Respawn & Anti-Ragdoll Guard Loop
 Hub.Lifecycle.TrackConnection(LocalPlayer.CharacterAdded:Connect(function()

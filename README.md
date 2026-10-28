@@ -11,7 +11,7 @@ Tujuan repo: satu sumber kebenaran yang rapi, mudah dibaca, mudah dimaintain, da
 | Path | Isi | Peran |
 | --- | --- | --- |
 | `Games/Steal-An-Egg.luau` | Hub utama game (single file, ±15.100 baris) | Kode produksi. Semua fitur, engine, dan UI hub ada di sini. |
-| `Games/StealAnEgg/Prediction.luau` | Modul tab Predictor (±1360 baris) | Modul terpisah: baca egg, format uang/berat/waktu, gradient rarity, kartu preview besar, tombol status, dan grid kartu egg. Dimuat hub lewat URL. |
+| `Games/StealAnEgg/Prediction.luau` | Modul tab Predictor (±2240 baris) | Modul terpisah: baca egg, format uang/berat/waktu, gradient rarity, kartu preview besar, tombol status, grid kartu egg, dan fuse predictor. Dimuat hub lewat URL. |
 | `Library/OniumV4.luau` | UI library hub (turunan Obsidian, ±17.800 baris) | Komponen window, tab, groupbox, dan element. |
 | `Manager/` | `FpsManger.luau`, `SaveManager.luau`, `ThemeManger.luau`, `ServerManger.luau` | Manager UI (performance, config, theme, server). Dimuat hub lewat URL, bukan dari sini. |
 | `Source/ChiliHub.luau` | Source hasil deobfuscate (Chili Hub V3, ±53.000 baris) | **Referensi baca saja.** Bukan bahan copy-paste. |
@@ -106,7 +106,7 @@ Untuk debug di executor, state yang sama juga tersedia di `getgenv().N3Hub_State
 | Admin | Kiri: Capture The Egg, Instant Steal Abuse, Cursed Island Wars — Kanan: Admin Treadmill, Minigame Eggs |
 | Quest | Kiri: Auto Butterfly — Kanan: Shooting Star |
 | Player | Kiri: ESP — Kanan: Movement, Character |
-| Predictor | Kiri: Egg Predictor |
+| Predictor | Kiri: Egg Predictor — Kanan: Fuse Predictor |
 | Settings | Kiri: Performance (FpsManager), Themes (ThemeManager) — Kanan: Server (ServerManager), Configuration (SaveManager). Tidak ada groupbox manual di hub. |
 
 Setiap groupbox dibangun lewat satu fungsi `Hub.Features.Build*(group)`. Nama tombol mengikuti pola `Build + Nama Groupbox`, jadi wiring di bagian 6 tinggal satu baris per fitur.
@@ -146,7 +146,7 @@ Catatan implementasi:
 
 ### Tab Predictor
 
-Tab `Predictor` dibuat sebelum `Settings` dan seluruh logikanya ada di modul terpisah `Games/StealAnEgg/Prediction.luau` supaya file hub tidak membengkak. Hub hanya membuat tab, groupbox `Egg Predictor`, lalu memanggil `PredictionModule.Build(groupbox)`.
+Tab `Predictor` dibuat sebelum `Settings` dan seluruh logikanya ada di modul terpisah `Games/StealAnEgg/Prediction.luau` supaya file hub tidak membengkak. Hub hanya membuat tab, dua groupbox (`Egg Predictor` di kiri, `Fuse Predictor` di kanan), lalu memanggil `PredictionModule.Build(groupbox)` dan `PredictionModule.BuildFuse(groupbox)`.
 
 | Kontrol | Perilaku |
 | --- | --- |
@@ -171,6 +171,21 @@ Catatan tampilan:
 - Aksen mewah memakai `SHIMMER_SEQUENCE` warna rarity Secret yang berjalan **mengelilingi border** kartu (stroke kedua dengan `UIGradient` yang `Offset`-nya dianimasikan di `Heartbeat`), plus stroke kartu terpilih dan stroke kartu preview. Tidak ada lagi strip di satu sisi saja.
 - Gambar utama kartu adalah **pet** (`Assets.Directory[category].Icon`), bukan egg; gambar egg (`Egg.Icon` / `EggRecords.EggIcon`) dipakai sebagai badge bulat kecil di pojok art.
 - Mutasi dibaca dari `eggData.Mutations` lewat `Mutations.LabelOf` (label) dan `Mutations.Get().Tint` (warna), sehingga nama mutasi tidak di-hardcode; `Rainbow`/`Prismatic` diwarnai per huruf.
+
+#### Group Fuse Predictor
+
+Groupbox `Fuse Predictor` ada di sisi kanan tab, isinya:
+
+| Bagian | Perilaku |
+| --- | --- |
+| Kartu hasil | Kotak art berisi gambar egg. Saat mesin kosong atau belum 3 pet, yang tampil egg biasa dari species tersebut; saat fuse benar-benar berjalan (`FusionLocked` atau `FusionEggReward`) egg memakai gradient rarity + chip `PREDICTED`, warna mutasi prediksi, rentang income, rentang skala/berat, dan bar status (`FUSING hh mm ss` / `READY TO CLAIM`). |
+| Slot 1–3 | Tiga kartu kecil berisi pet yang sedang dimuat (`FusionSlots` → `Inventory`): ikon pet, nama, `xScale`, mutasi, dan income per slot. Slot kosong bertuliskan `Empty`. |
+| Predicted Size | Tiga band skala paling mungkin: rentang skala, peluang (%), dan rentang berat Kg. Bila pet belum 3, baris diganti hint berapa pet lagi yang harus dimuat. |
+| Fuse Cost | Biaya fuse dari `FuseKernel.PriceFor`, diformat `$1.20M`. |
+
+Sumber datanya semua dari game: profil pemain `ReplicatedStorage.Shared.Save.Peek()` (`FusionSlots`, `Inventory`, `FusionLocked`, `FusionDuration`, `FusionEggReward`), band skala `Shared.Flags.GameplayBalance.Eggs.SCALE_BANDS` (fallback: upvalue `EggRecords.DrawAssetScale`), bias band `FuseKernel.BandWeightBias`, berat `EggRecords.WeightKgForScale`, dan harga `FuseKernel.PriceFor`.
+
+Peluang band dihitung seperti Chili: `weight_band * BandWeightBias(scale ketiga pet, min, max)` lalu dinormalisasi menjadi persen. Prediksi mutasi memakai multiplier terbesar dari mutasi ketiga pet (`Mutations.EarningsFor`), dan income prediksi memakai rumus yang sama dengan kartu egg.
 
 ### Sumber yang Di-fetch
 
