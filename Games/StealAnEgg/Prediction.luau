@@ -29,6 +29,8 @@ local MutationsModule = RequireGameModule("Shared", "Modules", "Mutations")
 local SaveModule = RequireGameModule("Shared", "Save")
 local FuseKernelModule = RequireGameModule("Shared", "Util", "FuseKernel")
 local BalanceModule = RequireGameModule("Shared", "Flags", "GameplayBalance")
+local EggStateModule = RequireGameModule("Client", "EggState")
+local AreasModule = RequireGameModule("Data", "Areas")
 
 local Prediction = {
 	SortOptions = { "Value", "Rarity", "Time Left" },
@@ -2346,8 +2348,10 @@ local WEBHOOK_EVENTS = { "Egg Stolen", "Egg Fused", "Egg Ready" }
 local WEBHOOK_STORAGE = "Onium/StealAnEgg_Webhook.json"
 local WEBHOOK_POLL = 1.5
 local WEBHOOK_SPACING = 1.6
-local WEBHOOK_FUSE_WINDOW = 8
-local WEBHOOK_THUMBNAIL_API = "https://thumbnails.roblox.com/v1/assets?assetIds=%s&size=420x420&format=Png"
+local WEBHOOK_CARRY_WINDOW = 90
+local WEBHOOK_SEEN_LIMIT = 4000
+local WEBHOOK_THUMBNAIL_API = "https://thumbnails.roblox.com/v1/assets?assetIds=%s&size=420x420&format=Png&returnPolicy=PlaceHolder&isCircular=false"
+local WEBHOOK_AVATAR_API = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=%d&size=150x150&format=Png&isCircular=true"
 local WEBHOOK_LOG = "[Onium Webhook]"
 
 local Webhook = {
@@ -2359,17 +2363,20 @@ local Webhook = {
 	EggFilter = {},
 	Queue = {},
 	Sending = false,
-	InventorySeen = nil,
+	EggSeen = nil,
+	EggSeenCount = 0,
 	PenStatus = {},
-	FuseWatch = nil,
-	FuseReward = false,
-	FuseDoneAt = 0,
+	FuseRewardUid = nil,
+	Carry = nil,
 	ThumbnailCache = {},
+	AvatarThumbnail = nil,
 	Inputs = {},
 	Connection = nil,
+	CarryConnection = nil,
 	WarnedRequest = false,
 	WarnedUrl = false,
 	WarnedSave = false,
+	WarnedInventory = false,
 	LastTestedUrl = nil,
 	PersistToken = nil,
 	NextPollAt = 0,
@@ -2558,25 +2565,12 @@ local function FormatMutationDiscord(mutations)
 	return table.concat(parts, "  ·  ")
 end
 
-local function ResolveThumbnail(iconUrl)
-	local assetId = string.match(tostring(iconUrl or ""), "rbxassetid://(%d+)")
-	if not assetId then
-		return nil
-	end
-	local cached = Webhook.ThumbnailCache[assetId]
-	if cached ~= nil then
-		return cached or nil
-	end
-	Webhook.ThumbnailCache[assetId] = false
-
+local function FetchThumbnail(apiUrl)
 	local requestFn = ResolveHttpRequest()
 	if not requestFn then
 		return nil
 	end
-	local callOk, response = pcall(requestFn, {
-		Url = string.format(WEBHOOK_THUMBNAIL_API, assetId),
-		Method = "GET",
-	})
+	local callOk, response = pcall(requestFn, { Url = apiUrl, Method = "GET" })
 	if not callOk or type(response) ~= "table" or type(response.Body) ~= "string" then
 		return nil
 	end
@@ -2586,15 +2580,39 @@ local function ResolveThumbnail(iconUrl)
 	local first = decodeOk and type(data) == "table" and type(data.data) == "table" and data.data[1] or nil
 	local imageUrl = type(first) == "table" and first.imageUrl or nil
 	if type(imageUrl) == "string" and imageUrl ~= "" then
-		Webhook.ThumbnailCache[assetId] = imageUrl
 		return imageUrl
 	end
 	return nil
 end
 
+local function ResolveAssetThumbnail(iconUrl)
+	local assetId = string.match(tostring(iconUrl or ""), "%d+")
+	if not assetId then
+		return nil
+	end
+	local cached = Webhook.ThumbnailCache[assetId]
+	if cached ~= nil then
+		return cached or nil
+	end
+	local imageUrl = FetchThumbnail(string.format(WEBHOOK_THUMBNAIL_API, assetId))
+	Webhook.ThumbnailCache[assetId] = imageUrl or false
+	return imageUrl
+end
+
+local function ResolvePlayerThumbnail()
+	if Webhook.AvatarThumbnail == nil then
+		Webhook.AvatarThumbnail = FetchThumbnail(string.format(WEBHOOK_AVATAR_API, LocalPlayer.UserId)) or false
+	end
+	return Webhook.AvatarThumbnail or nil
+end
+
 local function BuildWebhookEmbed(title, payload, source)
 	local assetInfo = payload.Asset
-	local thumbnail = assetInfo and ResolveThumbnail(assetInfo.EggIcon) or nil
+	local thumbnail = assetInfo and ResolveAssetThumbnail(assetInfo.PetIcon) or nil
+	if not thumbnail and assetInfo then
+		thumbnail = ResolveAssetThumbnail(assetInfo.EggIcon)
+	end
+	local avatar = ResolvePlayerThumbnail()
 	local rarityName = string.upper(assetInfo and assetInfo.Rarity or "Common")
 
 	local description = string.format(
@@ -2610,6 +2628,7 @@ local function BuildWebhookEmbed(title, payload, source)
 		title = title,
 		description = description,
 		color = assetInfo and FormatColorInt(assetInfo.RarityColor) or FormatColorInt(COLORS.Text),
+		thumbnail = thumbnail and { url = thumbnail } or nil,
 		fields = {
 			{ name = "Income", value = string.format("`%s`", FormatRate(payload.Income)), inline = true },
 			{ name = "Size", value = string.format("`%.2fx`", payload.Scale), inline = true },
@@ -2622,11 +2641,11 @@ local function BuildWebhookEmbed(title, payload, source)
 			{ name = "Mutation", value = FormatMutationDiscord(payload.Mutations), inline = true },
 			{ name = "Source", value = string.format("`%s`", source), inline = true },
 		},
-		footer = { text = "Onium Hub  ·  Steal An Egg" },
+		footer = { text = "Onium Hub  ·  Steal An Egg", icon_url = avatar },
 		timestamp = DateTime.now():ToIsoDate(),
 	}
-	if thumbnail then
-		embed.thumbnail = { url = thumbnail }
+	if avatar then
+		embed.author.icon_url = avatar
 	end
 	return embed
 end
@@ -2787,8 +2806,10 @@ local function EnqueueEggWebhook(eventName, category, scale, mutations, source)
 		Mutations = ReadMutations(mutations),
 	}
 
-	table.insert(Webhook.Queue, { Embed = BuildWebhookEmbed(eventName, payload, source) })
-	WebhookSending()
+	task.spawn(function()
+		table.insert(Webhook.Queue, { Embed = BuildWebhookEmbed(eventName, payload, source) })
+		WebhookSending()
+	end)
 end
 
 local function ReadSaveProfile()
@@ -2809,67 +2830,115 @@ local function ReadSaveProfile()
 	return profile
 end
 
+local function RememberEgg(uid)
+	if type(Webhook.EggSeen) ~= "table" or Webhook.EggSeen[uid] then
+		return
+	end
+	Webhook.EggSeen[uid] = true
+	Webhook.EggSeenCount += 1
+end
+
 local function PollFuseWebhook(profile)
-	local slots = type(profile) == "table" and type(profile.FusionSlots) == "table" and profile.FusionSlots or {}
-	local inventory = type(profile) == "table" and type(profile.Inventory) == "table" and profile.Inventory or {}
-	local firstRecord = slots[1] ~= nil and inventory[slots[1]] or nil
-	if type(firstRecord) == "table" then
-		Webhook.FuseWatch = {
-			Category = tostring(firstRecord.Category),
-			Scale = tonumber(firstRecord.Scale) or 1,
-			Mutations = type(firstRecord.Mutations) == "table" and firstRecord.Mutations or {},
-		}
+	local reward = type(profile) == "table" and profile.FusionEggReward or nil
+	if type(reward) ~= "table" then
+		return
 	end
 
-	local reward = type(profile) == "table" and profile.FusionEggReward ~= nil and profile.FusionEggReward ~= false
-	if reward and not Webhook.FuseReward then
-		Webhook.FuseReward = true
-		Webhook.FuseDoneAt = os.clock()
-		local watch = Webhook.FuseWatch
-		if watch then
-			EnqueueEggWebhook("Egg Fused", watch.Category, watch.Scale, watch.Mutations, "Fuse Machine")
-		end
-	elseif not reward then
-		Webhook.FuseReward = false
+	local rewardUid = reward.Uid ~= nil and tostring(reward.Uid) or nil
+	if rewardUid == nil or rewardUid == Webhook.FuseRewardUid then
+		return
+	end
+	Webhook.FuseRewardUid = rewardUid
+	RememberEgg(rewardUid)
+
+	local egg = type(reward.Egg) == "table" and reward.Egg or nil
+	if egg then
+		EnqueueEggWebhook(
+			"Egg Fused",
+			egg.AssetCategory,
+			tonumber(egg.AssetScale) or 1,
+			type(egg.Mutations) == "table" and egg.Mutations or {},
+			"Fuse Machine"
+		)
 	end
 end
 
-local function PollInventoryWebhook(profile)
-	if type(profile) ~= "table" or type(profile.Inventory) ~= "table" then
+local function AreaDisplayName(areaId)
+	local directory = type(AreasModule) == "table" and type(AreasModule.Directory) == "table" and AreasModule.Directory or nil
+	local entry = directory and areaId ~= nil and directory[tostring(areaId)] or nil
+	return type(entry) == "table" and type(entry.DisplayName) == "string" and entry.DisplayName or nil
+end
+
+local function NoteCarry(carryState)
+	if type(carryState) ~= "table" or carryState.IsCarrying ~= true then
 		return
 	end
-	local inventory = profile.Inventory
-	if Webhook.InventorySeen == nil then
-		Webhook.InventorySeen = {}
-		for uid in pairs(inventory) do
-			Webhook.InventorySeen[uid] = true
+	Webhook.Carry = {
+		Uid = carryState.Uid ~= nil and tostring(carryState.Uid) or nil,
+		Category = carryState.AssetCategory ~= nil and tostring(carryState.AssetCategory) or nil,
+		Area = AreaDisplayName(carryState.AreaId),
+		At = os.clock(),
+	}
+end
+
+local function EggSource(uid, category)
+	local carry = Webhook.Carry
+	if type(carry) ~= "table" then
+		return "Egg Inventory"
+	end
+	if os.clock() - carry.At > WEBHOOK_CARRY_WINDOW then
+		Webhook.Carry = nil
+		return "Egg Inventory"
+	end
+	if carry.Uid ~= uid and (carry.Category == nil or carry.Category ~= category) then
+		return "Egg Inventory"
+	end
+	Webhook.Carry = nil
+	return carry.Area or "Field"
+end
+
+local function PollEggInventoryWebhook(profile)
+	local eggInventory = type(profile) == "table" and type(profile.EggInventory) == "table" and profile.EggInventory or nil
+	if not eggInventory then
+		if type(profile) == "table" and not Webhook.WarnedInventory then
+			Webhook.WarnedInventory = true
+			LogWebhook("EggInventory tidak ditemukan di profil, event egg tidak bisa dipantau")
 		end
 		return
 	end
 
-	for uid, record in pairs(inventory) do
-		if not Webhook.InventorySeen[uid] then
-			Webhook.InventorySeen[uid] = true
-			if type(record) == "table" then
-				local isFuseResult = Webhook.FuseWatch
-					and tostring(record.Category) == Webhook.FuseWatch.Category
-					and os.clock() - Webhook.FuseDoneAt < WEBHOOK_FUSE_WINDOW
-				if not isFuseResult then
-					EnqueueEggWebhook(
-						"Egg Stolen",
-						record.Category,
-						tonumber(record.Scale) or 1,
-						type(record.Mutations) == "table" and record.Mutations or {},
-						"Inventory"
-					)
-				end
+	if Webhook.EggSeen == nil then
+		Webhook.EggSeen = {}
+		for uid in pairs(eggInventory) do
+			RememberEgg(tostring(uid))
+		end
+		LogWebhook(string.format("%d egg sudah ada di inventory, notifikasi mulai dari egg berikutnya", Webhook.EggSeenCount))
+		return
+	end
+
+	for uid, record in pairs(eggInventory) do
+		local uidText = tostring(uid)
+		if type(record) == "table" and not Webhook.EggSeen[uidText] then
+			RememberEgg(uidText)
+			if uidText ~= Webhook.FuseRewardUid then
+				local category = tostring(record.AssetCategory)
+				LogWebhook(string.format("egg baru terdeteksi: %s", category))
+				EnqueueEggWebhook(
+					"Egg Stolen",
+					category,
+					tonumber(record.AssetScale) or 1,
+					type(record.Mutations) == "table" and record.Mutations or {},
+					EggSource(uidText, category)
+				)
 			end
 		end
 	end
 
-	for uid in pairs(Webhook.InventorySeen) do
-		if inventory[uid] == nil then
-			Webhook.InventorySeen[uid] = nil
+	if Webhook.EggSeenCount > WEBHOOK_SEEN_LIMIT then
+		Webhook.EggSeen = {}
+		Webhook.EggSeenCount = 0
+		for uid in pairs(eggInventory) do
+			RememberEgg(tostring(uid))
 		end
 	end
 end
@@ -2890,7 +2959,7 @@ end
 local function PollWebhook()
 	local profile = ReadSaveProfile()
 	PollFuseWebhook(profile)
-	PollInventoryWebhook(profile)
+	PollEggInventoryWebhook(profile)
 	PollPenWebhook()
 end
 
@@ -3072,6 +3141,15 @@ function Prediction.BuildWebhook(groupbox)
 		end,
 	})
 
+	if type(EggStateModule) == "table" and type(EggStateModule.CarryChanged) == "table" then
+		local connectOk, carryConnection = pcall(function()
+			return EggStateModule.CarryChanged:Connect(NoteCarry)
+		end)
+		if connectOk then
+			Webhook.CarryConnection = carryConnection
+		end
+	end
+
 	LogWebhook(string.format(
 		"aktif · executor=%s · transport=%s · url=%s",
 		ReadExecutorName(),
@@ -3105,6 +3183,10 @@ function Prediction.Stop()
 	if Prediction.Webhook and Prediction.Webhook.Connection then
 		Prediction.Webhook.Connection:Disconnect()
 		Prediction.Webhook.Connection = nil
+	end
+	if Prediction.Webhook and Prediction.Webhook.CarryConnection then
+		Prediction.Webhook.CarryConnection:Disconnect()
+		Prediction.Webhook.CarryConnection = nil
 	end
 	if Prediction.Webhook then
 		table.clear(Prediction.Webhook.Queue)

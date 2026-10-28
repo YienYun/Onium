@@ -187,11 +187,13 @@ Groupbox `Discord Webhook` ada paling atas di kolom kiri dan default **collapsed
 
 Sumber event semuanya dari state game, tanpa menebak:
 
-- `Egg Fused` — `FusionEggReward` berubah dari `false` ke `true` (egg dari mesin fuse siap diambil). Kategori & skala diambil dari `FusionSlots` terakhir yang terlihat.
-- `Egg Stolen` — ada UID baru di `Save.Peek().Inventory`; UID yang muncul ≤ 6 detik setelah fuse selesai tidak dikirim dua kali.
-- `Egg Ready` — egg di pen berubah status `Growing` → `Ready` (dari `EggState.ReadOwnerEggs` + `IsReadyToHatch`).
+- `Egg Stolen` — ada UID baru di `Save.Peek().EggInventory` (inilah tabel tempat egg yang kamu dapat disimpan, bukan `Inventory` yang berisi pet). UID yang berasal dari reward fuse tidak dikirim sebagai stolen.
+- `Egg Fused` — `FusionEggReward` berisi objek `{Uid, Egg}`; egg hasil fuse sudah membawa `AssetCategory`, `AssetScale`, dan `Mutations` sendiri, jadi embed memakai data hasil fuse yang asli lalu UID-nya ditandai supaya tidak ikut terkirim sebagai `Egg Stolen` saat diklaim.
+- `Egg Ready` — egg di pen berubah status `Growing` → `Ready` (dari `EggState.ReadOwnerEggs` + `IsReadyToHatch`). Field `Source` berisi nama area dari `EggState.CarryChanged` + `Data.Areas.Directory` saat egg didapat dari mencuri, atau `Egg Inventory` / `Fuse Machine` / `Pen`.
 
-Embed dibuat di modul: author nama pemain, judul event, deskripsi nama egg + rarity, warna embed dari `Rarity.Color`, field `Income` / `Size` / `Weight` / `Rarity` / `Mutation` / `Source`, thumbnail memakai thumbnail asset resmi (`thumbnails.roblox.com`, di-cache per asset id), footer `Onium Hub · Steal An Egg`, dan timestamp. Pengiriman memakai antrean (`Queue`) + `task.spawn` dengan jeda 1.6 detik, dan setiap kiriman dibungkus `pcall` supaya tidak pernah melempar error ke hub.
+Embed dibuat di modul: author nama pemain (dengan avatar headshot Roblox), judul event, deskripsi nama egg + rarity, warna embed dari `Rarity.Color`, field `Income` / `Size` / `Weight` / `Rarity` / `Mutation` / `Source`, thumbnail memakai thumbnail asset resmi (`thumbnails.roblox.com` dengan `returnPolicy=PlaceHolder`, di-cache per asset id) yang diambil dari icon **pet** (`Assets.Directory[].Icon`) dan baru memakai icon egg bila thumbnail pet tidak tersedia, footer `Onium Hub · Steal An Egg`, dan timestamp. Pengiriman memakai antrean (`Queue`) + `task.spawn` dengan jeda 1.6 detik, dan setiap kiriman dibungkus `pcall` supaya tidak pernah melempar error ke hub.
+
+URL dan `Webhook Min Value` dibaca langsung dari nilai input (tidak menunggu Enter), transport HTTP dicari dari `syn` / `fluxus` / `http` / `krnl` / `http_request` / `https_request` / `getgenv().request` / `getfenv().request` / `HttpService:RequestAsync`. Console menulis `[Onium Webhook]` berisi status transport, jumlah egg yang sudah ada saat mulai, setiap egg baru yang terdeteksi, dan alasan penolakan dari Discord (HTTP status).
 
 #### Group Fuse Predictor
 
