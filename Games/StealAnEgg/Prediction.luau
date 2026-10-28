@@ -3,6 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local HttpService = game:GetService("HttpService")
+local AssetService = game:GetService("AssetService")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -2358,6 +2359,7 @@ local WEBHOOK_ASSET_IMAGE_API = "https://www.roblox.com/asset-thumbnail/image?as
 local WEBHOOK_ASSET_DELIVERY_API = "https://assetdelivery.roblox.com/v1/asset/?id=%s"
 local WEBHOOK_ASSET_DELIVERY_V2_API = "https://assetdelivery.roblox.com/v2/assetId/%s"
 local WEBHOOK_PNG_SIGNATURE = "\137PNG\r\n\26\n"
+local WEBHOOK_RENDER_SIZE = 256
 local WEBHOOK_JPEG_SIGNATURE = "\255\216\255"
 local WEBHOOK_THUMBNAIL_TRIES = 4
 local WEBHOOK_THUMBNAIL_DELAY = 1
@@ -2667,6 +2669,7 @@ local function BuildAssetThumbnailSource(iconUrl)
 	end
 	return {
 		Key = "asset_" .. assetId,
+		AssetId = assetId,
 		Apis = {
 			string.format(WEBHOOK_THUMBNAIL_API, assetId),
 			string.format(WEBHOOK_THUMBNAIL_AUTO_API, assetId),
@@ -2720,6 +2723,147 @@ local function ResolveThumbnailUrl(source, tries)
 	return nil
 end
 
+local CRC_TABLE = {}
+for index = 0, 255 do
+	local value = index
+	for _ = 1, 8 do
+		if value % 2 == 1 then
+			value = bit32.bxor(0xEDB88320, math.floor(value / 2))
+		else
+			value = math.floor(value / 2)
+		end
+	end
+	CRC_TABLE[index] = value
+end
+
+local function Crc32(payload)
+	local crc = 0xFFFFFFFF
+	local length = #payload
+	local index = 1
+	while index <= length do
+		local chunkEnd = math.min(index + 2047, length)
+		for position = index, chunkEnd do
+			local byte = string.byte(payload, position)
+			crc = bit32.bxor(CRC_TABLE[bit32.band(bit32.bxor(crc, byte), 0xFF)], math.floor(crc / 256))
+		end
+		index = chunkEnd + 1
+	end
+	return bit32.bxor(crc, 0xFFFFFFFF)
+end
+
+local function Adler32(payload)
+	local first, second = 1, 0
+	local length = #payload
+	local index = 1
+	while index <= length do
+		local chunkEnd = math.min(index + 4095, length)
+		for position = index, chunkEnd do
+			first = (first + string.byte(payload, position)) % 65521
+			second = (second + first) % 65521
+		end
+		index = chunkEnd + 1
+	end
+	return second * 65536 + first
+end
+
+local function PackUInt32(value)
+	return string.char(
+		math.floor(value / 16777216) % 256,
+		math.floor(value / 65536) % 256,
+		math.floor(value / 256) % 256,
+		value % 256
+	)
+end
+
+local function PngChunk(tag, payload)
+	return PackUInt32(#payload) .. tag .. payload .. PackUInt32(Crc32(tag .. payload))
+end
+
+local function DeflateStored(raw)
+	local parts = { string.char(0x78, 0x01) }
+	local index = 1
+	local length = #raw
+	while index <= length do
+		local blockLength = math.min(65535, length - index + 1)
+		local isFinal = (index + blockLength - 1) >= length and 1 or 0
+		local low = blockLength % 256
+		local high = math.floor(blockLength / 256)
+		parts[#parts + 1] = string.char(isFinal, low, high, 255 - low, 255 - high)
+		parts[#parts + 1] = string.sub(raw, index, index + blockLength - 1)
+		index += blockLength
+	end
+	parts[#parts + 1] = PackUInt32(Adler32(raw))
+	return table.concat(parts)
+end
+
+local function EncodePng(width, height, rows)
+	local header = PackUInt32(width) .. PackUInt32(height) .. string.char(8, 6, 0, 0, 0)
+	return WEBHOOK_PNG_SIGNATURE
+		.. PngChunk("IHDR", header)
+		.. PngChunk("IDAT", DeflateStored(table.concat(rows)))
+		.. PngChunk("IEND", "")
+end
+
+local function DownscaleRows(pixels, width, height, target)
+	local scaleX, scaleY = width / target, height / target
+	local rows = table.create(target)
+	for y = 0, target - 1 do
+		local sourceY = math.min(height - 1, math.floor(y * scaleY))
+		local rowOffset = sourceY * width
+		local parts = table.create(target * 4 + 1)
+		parts[1] = string.char(0)
+		for x = 0, target - 1 do
+			local sourceX = math.min(width - 1, math.floor(x * scaleX))
+			local value = buffer.readu32(pixels, (rowOffset + sourceX) * 4)
+			local slot = x * 4 + 2
+			parts[slot] = string.char(value % 256)
+			parts[slot + 1] = string.char(math.floor(value / 256) % 256)
+			parts[slot + 2] = string.char(math.floor(value / 65536) % 256)
+			parts[slot + 3] = string.char(math.floor(value / 16777216) % 256)
+		end
+		rows[y + 1] = table.concat(parts)
+	end
+	return rows
+end
+
+local function RenderAssetPng(assetId)
+	if type(AssetService.CreateEditableImageAsync) ~= "function" then
+		return nil, "executor tanpa CreateEditableImageAsync"
+	end
+
+	local created, image = pcall(function()
+		return AssetService:CreateEditableImageAsync("rbxassetid://" .. assetId)
+	end)
+	if not created or not image then
+		return nil, "render ditolak: " .. tostring(image)
+	end
+
+	local size = image.Size
+	local width, height = math.floor(size.X), math.floor(size.Y)
+	if width <= 0 or height <= 0 then
+		pcall(function()
+			image:Destroy()
+		end)
+		return nil, "ukuran gambar kosong"
+	end
+
+	local readOk, pixels = pcall(function()
+		return image:ReadPixelsBuffer(Vector2.zero, size)
+	end)
+	pcall(function()
+		image:Destroy()
+	end)
+	if not readOk or type(pixels) ~= "buffer" then
+		return nil, "ReadPixelsBuffer gagal: " .. tostring(pixels)
+	end
+	if buffer.len(pixels) ~= width * height * 4 then
+		return nil, "format piksel tidak didukung"
+	end
+
+	local target = math.min(WEBHOOK_RENDER_SIZE, math.max(width, height))
+	return EncodePng(target, target, DownscaleRows(pixels, width, height, target))
+end
+
 local function ResolveAttachment(source)
 	if type(source) ~= "table" then
 		return nil
@@ -2728,6 +2872,16 @@ local function ResolveAttachment(source)
 	if cached ~= nil then
 		return cached or nil
 	end
+	if source.AssetId then
+		local rendered, renderError = RenderAssetPng(source.AssetId)
+		if rendered then
+			Webhook.AttachmentCache[source.Key] = rendered
+			LogWebhook(string.format("gambar dirender di dalam game (%d byte) untuk %s", #rendered, source.Key))
+			return rendered
+		end
+		Webhook.LastThumbnailError = renderError
+	end
+
 	for _, imageUrl in ipairs(source.Images) do
 		local payload = ReadImageBytes(imageUrl, 0)
 		if payload then
