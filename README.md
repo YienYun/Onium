@@ -101,7 +101,7 @@ Untuk debug di executor, state yang sama juga tersedia di `getgenv().N3Hub_State
 | --- | --- |
 | Farm | Kiri: Farm Eggs — Kanan: Progression |
 | Pets | Kiri: Auto Place Egg, Auto Mutation, Auto Fuse — Kanan: Auto Hatch & Equip, Auto Sell, Favorite |
-| Event | Kiri: Pumpkin Boss, Ghost Dog & Fishing, The Hollow, Cursed Island Wars — Kanan: Phantom Express, Halloween Monsters |
+| Event | Kiri: Cursed Island Wars, Pumpkin Boss, Ghost Dog & Fishing, The Hollow — Kanan: Phantom Express, Halloween Monsters |
 | Admin | Kiri: Capture The Egg, Instant Steal Abuse — Kanan: Admin Treadmill, Minigame Eggs |
 | Quest | Kiri: Auto Butterfly — Kanan: Shooting Star |
 | Player | Kiri: ESP — Kanan: Movement, Character |
@@ -128,7 +128,7 @@ Catatan implementasi:
 
 ### Group Cursed Island Wars (tab Event)
 
-Group `Cursed Island Wars` ada di kolom kiri tab `Event` dan hanya berisi dua kontrol, tanpa status label:
+Group `Cursed Island Wars` ada di kolom kiri tab `Event`, sengaja ditaruh paling atas supaya kelihatan tanpa scroll, dan hanya berisi dua kontrol, tanpa status label:
 
 | Kontrol | Perilaku |
 | --- | --- |
