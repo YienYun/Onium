@@ -199,6 +199,10 @@ Embed dibuat di modul: author nama pemain (dengan avatar headshot Roblox), judul
 
 Bila ketiganya gagal, embed tetap dikirim dan masuk daftar perbaikan: dicek ulang tiap 2 detik (mundur sampai 10 detik, batas 120 detik) lalu `PATCH /webhooks/<id>/<token>/messages/<message_id>` menempelkan gambar ke pesan yang sudah ada. Hasil sukses di-cache per asset id.
 
+Alat diagnosa `Games/StealAnEgg/WebhookThumbnailTest.luau` tidak dipanggil hub. Dijalankan manual di executor, ia membuka window kecil (`Webhook URL` otomatis terisi dari `Onium/StealAnEgg_Webhook.json`, `Asset ID`, dan dua tombol): `Send Chili Path` menembak API thumbnail persis cara Chili lalu mencetak body JSON mentahnya, sedangkan `Send Render In-Game` menjalankan jalur render `EditableImage` lalu mengirim PNG-nya sebagai lampiran. Skrip ini hanya alat diagnosa dan boleh dihapus setelah tidak diperlukan.
+
+Seluruh teks di modul dan skrip tes memakai bahasa Inggris, tanpa komentar di dalam kode, dan console hanya diisi kegagalan (`[Onium Webhook] ...`) supaya Output tidak penuh saat farming.
+
 #### Group Fuse Predictor
 
 Groupbox `Fuse Predictor` ada di sisi kanan tab, isinya:
