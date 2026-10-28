@@ -2354,7 +2354,14 @@ local WEBHOOK_THUMBNAIL_API = "https://thumbnails.roblox.com/v1/assets?assetIds=
 local WEBHOOK_AVATAR_API = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=%d&size=150x150&format=Png&isCircular=false"
 local WEBHOOK_ASSET_FALLBACK_API = "https://www.roblox.com/asset-thumbnail/image?assetId=%s&width=420&height=420&format=png"
 local WEBHOOK_AVATAR_FALLBACK_API = "https://www.roblox.com/headshot-thumbnail/image?userId=%d&width=150&height=150&format=png"
+local WEBHOOK_THUMBNAIL_AUTO_API = "https://thumbnails.roblox.com/v1/assets?assetIds=%s&size=420x420&format=Png&isCircular=false"
+local WEBHOOK_ASSET_IMAGE_API = "https://www.roblox.com/asset-thumbnail/image?assetId=%s&width=420&height=420&format=png"
+local WEBHOOK_ASSET_DELIVERY_API = "https://assetdelivery.roblox.com/v1/asset/?id=%s"
+local WEBHOOK_ASSET_DELIVERY_V2_API = "https://assetdelivery.roblox.com/v2/assetId/%s"
 local WEBHOOK_PNG_SIGNATURE = "\137PNG\r\n\26\n"
+local WEBHOOK_JPEG_SIGNATURE = "\255\216\255"
+local WEBHOOK_THUMBNAIL_TRIES = 4
+local WEBHOOK_THUMBNAIL_DELAY = 1
 local WEBHOOK_REPAIR_BUDGET = 120
 local WEBHOOK_REPAIR_STEP = 2
 local WEBHOOK_REPAIR_STEP_MAX = 10
@@ -2375,6 +2382,7 @@ local Webhook = {
 	FuseRewardUid = nil,
 	Carry = nil,
 	ThumbnailCache = {},
+	AttachmentCache = {},
 	LastThumbnailError = nil,
 	Repairs = {},
 	Repairing = false,
@@ -2573,28 +2581,50 @@ local function FormatMutationDiscord(mutations)
 	return table.concat(parts, "  ·  ")
 end
 
-local function RequestJson(requestFn, apiUrl)
-	local callOk, response = pcall(requestFn, { Url = apiUrl, Method = "GET" })
+local function HttpCall(options)
+	local requestFn = ResolveHttpRequest()
+	if not requestFn then
+		return nil
+	end
+	local callOk, response = pcall(requestFn, options)
 	if not callOk or type(response) ~= "table" then
+		return nil
+	end
+	return response
+end
+
+local function ReadStatus(response)
+	return tonumber(response.StatusCode or response.Status or response.status)
+end
+
+local function DecodeJson(payload)
+	local decodeOk, decoded = pcall(function()
+		return HttpService:JSONDecode(tostring(payload))
+	end)
+	return decodeOk and type(decoded) == "table" and decoded or nil
+end
+
+local function IsPng(payload)
+	return string.sub(payload, 1, 8) == WEBHOOK_PNG_SIGNATURE
+end
+
+local function IsJpeg(payload)
+	return string.sub(payload, 1, 3) == WEBHOOK_JPEG_SIGNATURE
+end
+
+local function ReadThumbnailUrl(apiUrl, requireImagePath)
+	local response = HttpCall({ Url = apiUrl, Method = "GET" })
+	if not response then
 		return nil, "request gagal"
 	end
-	if tonumber(response.StatusCode) ~= 200 then
-		return nil, "HTTP " .. tostring(response.StatusCode or "?")
+	if ReadStatus(response) ~= 200 then
+		return nil, "HTTP " .. tostring(ReadStatus(response))
 	end
-	local decodeOk, data = pcall(function()
-		return HttpService:JSONDecode(tostring(response.Body))
-	end)
-	if not decodeOk or type(data) ~= "table" then
-		return nil, "respons bukan json"
-	end
-	local entry = type(data.data) == "table" and data.data[1] or nil
+	local data = DecodeJson(response.Body)
+	local entry = data and type(data.data) == "table" and data.data[1] or nil
 	if type(entry) ~= "table" then
 		return nil, "data kosong"
 	end
-	return entry
-end
-
-local function ExtractCdnImage(entry, requireImagePath)
 	if entry.state ~= "Completed" then
 		return nil, "state " .. tostring(entry.state)
 	end
@@ -2603,30 +2633,32 @@ local function ExtractCdnImage(entry, requireImagePath)
 		return nil, "imageUrl kosong"
 	end
 	if requireImagePath and not string.find(imageUrl, "/Image/", 1, true) then
-		return nil, "masih placeholder"
+		return nil, "placeholder"
 	end
 	return imageUrl
 end
 
-local function ProbeImageBytes(apiUrl)
-	local requestFn = ResolveHttpRequest()
-	if not requestFn then
+local function ReadImageBytes(requestUrl, depth)
+	if type(requestUrl) ~= "string" or requestUrl == "" or (depth or 0) > 2 then
 		return nil
 	end
-	local callOk, response = pcall(requestFn, { Url = apiUrl, Method = "GET" })
-	if not callOk or type(response) ~= "table" then
+	local response = HttpCall({ Url = requestUrl, Method = "GET" })
+	if not response then
 		return nil
 	end
 	local body = response.Body
-	if type(body) ~= "string" or string.sub(body, 1, 8) ~= WEBHOOK_PNG_SIGNATURE then
+	if type(body) ~= "string" or body == "" then
 		return nil
 	end
-	local headers = response.Headers
-	local location = type(headers) == "table" and (headers.Location or headers.location) or nil
-	if type(location) == "string" and string.find(location, "rbxcdn", 1, true) then
-		return location
+	if IsPng(body) or IsJpeg(body) then
+		return body
 	end
-	return apiUrl
+	local data = DecodeJson(body)
+	local location = data and type(data.location) == "string" and data.location or nil
+	if location then
+		return ReadImageBytes(location, (depth or 0) + 1)
+	end
+	return nil
 end
 
 local function BuildAssetThumbnailSource(iconUrl)
@@ -2636,13 +2668,30 @@ local function BuildAssetThumbnailSource(iconUrl)
 	end
 	return {
 		Key = "asset_" .. assetId,
-		Api = string.format(WEBHOOK_THUMBNAIL_API, assetId),
-		Fallback = string.format(WEBHOOK_ASSET_FALLBACK_API, assetId),
+		Apis = {
+			string.format(WEBHOOK_THUMBNAIL_API, assetId),
+			string.format(WEBHOOK_THUMBNAIL_AUTO_API, assetId),
+		},
+		Images = {
+			string.format(WEBHOOK_ASSET_IMAGE_API, assetId),
+			string.format(WEBHOOK_ASSET_DELIVERY_V2_API, assetId),
+			string.format(WEBHOOK_ASSET_DELIVERY_API, assetId),
+		},
 		RequireImage = true,
 	}
 end
 
-local function ResolveThumbnail(source)
+local function BuildAvatarThumbnailSource()
+	local userId = tostring(LocalPlayer.UserId)
+	return {
+		Key = "avatar_" .. userId,
+		Apis = { string.format(WEBHOOK_AVATAR_API, LocalPlayer.UserId) },
+		Images = { string.format(WEBHOOK_AVATAR_FALLBACK_API, LocalPlayer.UserId) },
+		RequireImage = false,
+	}
+end
+
+local function ResolveThumbnailUrl(source, tries)
 	if type(source) ~= "table" then
 		return nil
 	end
@@ -2651,47 +2700,57 @@ local function ResolveThumbnail(source)
 		return cached
 	end
 
-	local requestFn = ResolveHttpRequest()
-	if not requestFn then
-		return nil
+	for attempt = 1, tries or 1 do
+		local lastError
+		for _, apiUrl in ipairs(source.Apis) do
+			local imageUrl, errorText = ReadThumbnailUrl(apiUrl, source.RequireImage)
+			if imageUrl then
+				Webhook.ThumbnailCache[source.Key] = imageUrl
+				return imageUrl
+			end
+			lastError = errorText
+		end
+		Webhook.LastThumbnailError = lastError
+		if string.find(tostring(lastError), "Blocked", 1, true) then
+			return nil
+		end
+		if attempt < (tries or 1) then
+			task.wait(WEBHOOK_THUMBNAIL_DELAY)
+		end
 	end
-
-	local entry, entryError = RequestJson(requestFn, source.Api)
-	local imageUrl = entry and ExtractCdnImage(entry, source.RequireImage) or nil
-	if imageUrl then
-		imageUrl = ProbeImageBytes(imageUrl)
-	end
-	if not imageUrl then
-		imageUrl = ProbeImageBytes(source.Fallback)
-	end
-	if not imageUrl then
-		Webhook.LastThumbnailError = tostring(entryError)
-		return nil
-	end
-
-	Webhook.ThumbnailCache[source.Key] = imageUrl
-	return imageUrl
+	return nil
 end
 
-local function BuildAvatarThumbnailSource()
-	local userId = tostring(LocalPlayer.UserId)
-	return {
-		Key = "avatar_" .. userId,
-		Api = string.format(WEBHOOK_AVATAR_API, LocalPlayer.UserId),
-		Fallback = string.format(WEBHOOK_AVATAR_FALLBACK_API, LocalPlayer.UserId),
-		RequireImage = false,
-	}
+local function ResolveAttachment(source)
+	if type(source) ~= "table" then
+		return nil
+	end
+	local cached = Webhook.AttachmentCache[source.Key]
+	if cached ~= nil then
+		return cached or nil
+	end
+	for _, imageUrl in ipairs(source.Images) do
+		local payload = ReadImageBytes(imageUrl, 0)
+		if payload then
+			Webhook.AttachmentCache[source.Key] = payload
+			return payload
+		end
+	end
+	Webhook.AttachmentCache[source.Key] = false
+	return nil
+end
+
+local function BuildAttachment(payload)
+	local name, mime = "onium_pet.png", "image/png"
+	if IsJpeg(payload) then
+		name, mime = "onium_pet.jpg", "image/jpeg"
+	end
+	return { Bytes = payload, Name = name, Mime = mime }
 end
 
 local function BuildWebhookEmbed(title, payload, source)
 	local assetInfo = payload.Asset
-	local thumbnailSource = assetInfo and BuildAssetThumbnailSource(assetInfo.PetIcon) or nil
-	local thumbnail = ResolveThumbnail(thumbnailSource)
-	if not thumbnail and assetInfo then
-		thumbnailSource = BuildAssetThumbnailSource(assetInfo.EggIcon)
-		thumbnail = ResolveThumbnail(thumbnailSource)
-	end
-	local avatar = ResolveThumbnail(BuildAvatarThumbnailSource())
+	local avatar = ResolveThumbnailUrl(BuildAvatarThumbnailSource(), 1)
 	local rarityName = string.upper(assetInfo and assetInfo.Rarity or "Common")
 
 	local description = string.format(
@@ -2707,7 +2766,6 @@ local function BuildWebhookEmbed(title, payload, source)
 		title = title,
 		description = description,
 		color = assetInfo and FormatColorInt(assetInfo.RarityColor) or FormatColorInt(COLORS.Text),
-		thumbnail = thumbnail and { url = thumbnail } or nil,
 		fields = {
 			{ name = "Income", value = string.format("`%s`", FormatRate(payload.Income)), inline = true },
 			{ name = "Size", value = string.format("`%.2fx`", payload.Scale), inline = true },
@@ -2726,27 +2784,72 @@ local function BuildWebhookEmbed(title, payload, source)
 	if avatar then
 		embed.author.icon_url = avatar
 	end
-	return embed, (not thumbnail and thumbnailSource) or nil
+	return embed
 end
 
-local function RequestJsonBody(requestFn, options)
-	local callOk, response = pcall(requestFn, options)
-	if not callOk or type(response) ~= "table" then
-		return false, nil, tostring(response)
+local function BuildAssetSourceForCategory(category)
+	local assetInfo = ReadAssetInfo(category)
+	if not assetInfo then
+		return nil
 	end
-	local status = tonumber(response.StatusCode or response.Status or response.status)
-	if status ~= nil and status >= 300 then
-		return false, nil, string.format("HTTP %d: %s", status, tostring(response.Body))
-	end
-	local decodeOk, decoded = pcall(function()
-		return HttpService:JSONDecode(tostring(response.Body))
+	return BuildAssetThumbnailSource(assetInfo.PetIcon) or BuildAssetThumbnailSource(assetInfo.EggIcon)
+end
+
+local function EncodePayload(payload)
+	local encodeOk, encoded = pcall(function()
+		return HttpService:JSONEncode(payload)
 	end)
-	return true, decodeOk and type(decoded) == "table" and decoded or nil, nil
+	return encodeOk and type(encoded) == "string" and encoded or nil
 end
 
-local function SendWebhookBody(url, embed)
-	local requestFn = ResolveHttpRequest()
-	if not requestFn then
+local function BuildWebhookPayload(embed, attachment)
+	local payload = {
+		embeds = { embed },
+		allowed_mentions = { parse = { "everyone" } },
+	}
+	if Webhook.PingEveryone then
+		payload.content = "@everyone"
+	end
+	local encoded = EncodePayload(payload)
+	if not encoded then
+		return nil
+	end
+	if not attachment then
+		return { Headers = { ["Content-Type"] = "application/json" }, Body = encoded }
+	end
+
+	local boundary = "----OniumBoundary" .. tostring(math.random(100000, 999999))
+	return {
+		Headers = { ["Content-Type"] = "multipart/form-data; boundary=" .. boundary },
+		Body = table.concat({
+			"--" .. boundary .. "\r\n",
+			'Content-Disposition: form-data; name="payload_json"\r\n',
+			"Content-Type: application/json\r\n\r\n",
+			encoded .. "\r\n",
+			"--" .. boundary .. "\r\n",
+			string.format('Content-Disposition: form-data; name="files[0]"; filename="%s"\r\n', attachment.Name),
+			"Content-Type: " .. attachment.Mime .. "\r\n\r\n",
+			attachment.Bytes .. "\r\n",
+			"--" .. boundary .. "--\r\n",
+		}, ""),
+	}
+end
+
+local function SendWebhookBody(url, embed, attachment)
+	local built = BuildWebhookPayload(embed, attachment)
+	if not built then
+		LogWebhook("gagal encode payload embed")
+		return false, nil
+	end
+
+	local separator = string.find(url, "?", 1, true) and "&" or "?"
+	local response = HttpCall({
+		Url = url .. separator .. "wait=true",
+		Method = "POST",
+		Headers = built.Headers,
+		Body = built.Body,
+	})
+	if not response then
 		if not Webhook.WarnedRequest then
 			Webhook.WarnedRequest = true
 			LogWebhook("executor ini tidak menyediakan request/syn.request, webhook tidak bisa mengirim")
@@ -2754,54 +2857,48 @@ local function SendWebhookBody(url, embed)
 		return false, nil
 	end
 
-	local body = {
-		embeds = { embed },
-		allowed_mentions = { parse = { "everyone" } },
-	}
-	if Webhook.PingEveryone then
-		body.content = "@everyone"
-	end
-
-	local encodeOk, encoded = pcall(function()
-		return HttpService:JSONEncode(body)
-	end)
-	if not encodeOk then
-		LogWebhook("gagal encode embed: " .. tostring(encoded))
+	local status = ReadStatus(response)
+	if status ~= nil and status >= 300 then
+		LogWebhook(string.format("Discord menolak kiriman (HTTP %d): %s", status, tostring(response.Body)))
 		return false, nil
 	end
-
-	local separator = string.find(url, "?", 1, true) and "&" or "?"
-	local sent, decoded, failure = RequestJsonBody(requestFn, {
-		Url = url .. separator .. "wait=true",
-		Method = "POST",
-		Headers = { ["Content-Type"] = "application/json" },
-		Body = encoded,
-	})
-	if not sent then
-		LogWebhook("Discord menolak kiriman: " .. tostring(failure))
-		return false, nil
-	end
-	return true, decoded
+	return true, DecodeJson(response.Body)
 end
 
 local function PatchWebhookMessage(url, messageId, embed)
-	local requestFn = ResolveHttpRequest()
-	if not requestFn then
+	local encoded = EncodePayload({ embeds = { embed } })
+	if not encoded then
 		return false
 	end
-	local encodeOk, encoded = pcall(function()
-		return HttpService:JSONEncode({ embeds = { embed } })
-	end)
-	if not encodeOk then
-		return false
-	end
-	local patched = RequestJsonBody(requestFn, {
+	local response = HttpCall({
 		Url = string.format("%s/messages/%s", url, messageId),
 		Method = "PATCH",
 		Headers = { ["Content-Type"] = "application/json" },
 		Body = encoded,
 	})
-	return patched
+	if not response then
+		return false
+	end
+	local status = ReadStatus(response)
+	return status == nil or status < 300
+end
+
+local function AttachThumbnail(job)
+	local source = job.Thumbnail
+	if not job.Embed.thumbnail and type(source) == "table" then
+		local imageUrl = ResolveThumbnailUrl(source, 1)
+		if imageUrl then
+			job.Embed.thumbnail = { url = imageUrl }
+			return nil
+		end
+		local payload = ResolveAttachment(source)
+		if payload then
+			local attachment = BuildAttachment(payload)
+			job.Embed.thumbnail = { url = "attachment://" .. attachment.Name }
+			return attachment
+		end
+	end
+	return nil
 end
 
 local function RepairSending()
@@ -2817,10 +2914,12 @@ local function RepairSending()
 				if now > job.Until then
 					table.remove(Webhook.Repairs, index)
 				elseif now >= job.NextAt then
-					local imageUrl = ResolveThumbnail(job.Thumbnail)
+					local imageUrl = ResolveThumbnailUrl(job.Thumbnail, 1)
 					if imageUrl then
 						job.Embed.thumbnail = { url = imageUrl }
-						if not PatchWebhookMessage(job.Base, job.MessageId, job.Embed) then
+						if PatchWebhookMessage(job.Base, job.MessageId, job.Embed) then
+							LogWebhook("thumbnail berhasil ditempel ke pesan sebelumnya")
+						else
 							LogWebhook("gagal menempelkan thumbnail ke pesan lama")
 						end
 						table.remove(Webhook.Repairs, index)
@@ -2860,27 +2959,36 @@ local function WebhookSending()
 					LogWebhook("Webhook URL masih kosong, isi dulu di group Discord Webhook")
 				end
 			else
-				local sent, message = SendWebhookBody(url, job.Embed)
-				if not sent then
-					task.wait(3)
+				local attachment = AttachThumbnail(job)
+				local sent, message = SendWebhookBody(url, job.Embed, attachment)
+				if not sent and attachment then
+					job.Embed.thumbnail = nil
+					attachment = nil
 					sent, message = SendWebhookBody(url, job.Embed)
 				end
+				if not sent then
+					task.wait(3)
+					sent, message = SendWebhookBody(url, job.Embed, attachment)
+				end
 				local messageId = sent and type(message) == "table" and message.id or nil
-				if job.Thumbnail and type(messageId) == "string" then
-					table.insert(Webhook.Repairs, {
-						Base = url,
-						MessageId = messageId,
-						Embed = job.Embed,
-						Thumbnail = job.Thumbnail,
-						Until = os.clock() + WEBHOOK_REPAIR_BUDGET,
-						NextAt = os.clock() + WEBHOOK_REPAIR_STEP,
-						Step = WEBHOOK_REPAIR_STEP,
-					})
+				if job.Thumbnail and not job.Embed.thumbnail then
+					if type(messageId) == "string" then
+						table.insert(Webhook.Repairs, {
+							Base = url,
+							MessageId = messageId,
+							Embed = job.Embed,
+							Thumbnail = job.Thumbnail,
+							Until = os.clock() + WEBHOOK_REPAIR_BUDGET,
+							NextAt = os.clock() + WEBHOOK_REPAIR_STEP,
+							Step = WEBHOOK_REPAIR_STEP,
+						})
+						RepairSending()
+					end
 					LogWebhook(string.format(
-						"thumbnail belum siap (%s), pesan akan dilengkapi otomatis",
-						tostring(Webhook.LastThumbnailError)
+						"thumbnail belum siap (%s) untuk %s",
+						tostring(Webhook.LastThumbnailError),
+						job.Thumbnail.Key
 					))
-					RepairSending()
 				end
 			end
 			task.wait(WEBHOOK_SPACING)
@@ -2974,8 +3082,10 @@ local function EnqueueEggWebhook(eventName, category, scale, mutations, source)
 	}
 
 	task.spawn(function()
-		local embed, pendingThumbnail = BuildWebhookEmbed(eventName, payload, source)
-		table.insert(Webhook.Queue, { Embed = embed, Thumbnail = pendingThumbnail })
+		table.insert(Webhook.Queue, {
+			Embed = BuildWebhookEmbed(eventName, payload, source),
+			Thumbnail = BuildAssetSourceForCategory(payload.Category),
+		})
 		WebhookSending()
 	end)
 end
