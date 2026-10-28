@@ -2344,9 +2344,11 @@ end
 
 local WEBHOOK_EVENTS = { "Egg Stolen", "Egg Fused", "Egg Ready" }
 local WEBHOOK_STORAGE = "Onium/StealAnEgg_Webhook.json"
-local WEBHOOK_POLL = 2
+local WEBHOOK_POLL = 1.5
 local WEBHOOK_SPACING = 1.6
+local WEBHOOK_FUSE_WINDOW = 8
 local WEBHOOK_THUMBNAIL_API = "https://thumbnails.roblox.com/v1/assets?assetIds=%s&size=420x420&format=Png"
+local WEBHOOK_LOG = "[Onium Webhook]"
 
 local Webhook = {
 	Url = "",
@@ -2357,33 +2359,109 @@ local Webhook = {
 	EggFilter = {},
 	Queue = {},
 	Sending = false,
-	Sent = {},
 	InventorySeen = nil,
 	PenStatus = {},
-	LastFuseAt = 0,
-	LastFuseCategory = nil,
-	LastFuseScale = 1,
+	FuseWatch = nil,
+	FuseReward = false,
+	FuseDoneAt = 0,
 	ThumbnailCache = {},
+	Inputs = {},
 	Connection = nil,
+	WarnedRequest = false,
+	WarnedUrl = false,
+	WarnedSave = false,
+	LastTestedUrl = nil,
+	PersistToken = nil,
 	NextPollAt = 0,
 }
 
 Prediction.Webhook = Webhook
 
-local function GetHttpRequest()
-	if type(syn) == "table" and type(syn.request) == "function" then
-		return syn.request
+local function RequestFallback(options)
+	local response = HttpService:RequestAsync({
+		Url = options.Url,
+		Method = options.Method,
+		Headers = options.Headers,
+		Body = options.Body,
+	})
+	return {
+		Success = response.Success,
+		StatusCode = response.StatusCode,
+		Status = response.StatusCode,
+		Body = response.Body,
+	}
+end
+
+local function ResolveHttpRequest()
+	local candidates = {}
+	local function push(candidate)
+		if type(candidate) == "function" then
+			table.insert(candidates, candidate)
+		end
 	end
-	if type(http) == "table" and type(http.request) == "function" then
-		return http.request
+
+	if type(syn) == "table" then
+		push(syn.request)
 	end
-	if type(http_request) == "function" then
-		return http_request
+	if type(fluxus) == "table" then
+		push(fluxus.request)
 	end
-	if type(request) == "function" then
-		return request
+	if type(http) == "table" then
+		push(http.request)
 	end
-	return nil
+	if type(krnl) == "table" then
+		push(krnl.request)
+	end
+	push(type(http_request) == "function" and http_request or nil)
+	push(type(https_request) == "function" and https_request or nil)
+
+	local envReaders = {}
+	if type(getgenv) == "function" then
+		table.insert(envReaders, getgenv)
+	end
+	if type(getfenv) == "function" then
+		table.insert(envReaders, getfenv)
+	end
+	for _, envReader in ipairs(envReaders) do
+		local envOk, env = pcall(envReader)
+		if envOk and type(env) == "table" then
+			push(rawget(env, "request"))
+		end
+	end
+
+	if type(HttpService.RequestAsync) == "function" then
+		push(RequestFallback)
+	end
+
+	return candidates[1]
+end
+
+local function LogWebhook(message)
+	print(string.format("%s %s", WEBHOOK_LOG, message))
+end
+
+local function ReadExecutorName()
+	if type(identifyexecutor) == "function" then
+		local callOk, name = pcall(identifyexecutor)
+		if callOk and type(name) == "string" and name ~= "" then
+			return name
+		end
+	end
+	return "unknown"
+end
+
+local function NormalizeUrl(rawUrl)
+	local url = tostring(rawUrl or ""):gsub("[%s`\"']", "")
+	if url == "" then
+		return ""
+	end
+	if not string.match(url, "^https?://") then
+		if not string.match(url, "^[%w%-%.]+%.com/") then
+			return ""
+		end
+		url = "https://" .. url
+	end
+	return url
 end
 
 local function ReadStoredWebhook()
@@ -2439,8 +2517,45 @@ local function ParseAmount(rawText)
 end
 
 local function FormatColorInt(color)
-	local value = math.floor(color.R * 255 + 0.5) * 65536 + math.floor(color.G * 255 + 0.5) * 256
-	return value + math.floor(color.B * 255 + 0.5)
+	return math.floor(color.R * 255 + 0.5) * 65536 + math.floor(color.G * 255 + 0.5) * 256 + math.floor(color.B * 255 + 0.5)
+end
+
+local function ReadInputValue(key, fallback)
+	local input = Webhook.Inputs[key]
+	if type(input) == "table" then
+		local value = input.Value
+		if type(value) == "string" then
+			return value
+		end
+	end
+	return fallback
+end
+
+local function CurrentUrl()
+	local url = NormalizeUrl(ReadInputValue("Url", Webhook.Url))
+	if url ~= "" then
+		Webhook.Url = url
+	end
+	return url
+end
+
+local function CurrentMinValue()
+	local raw = ReadInputValue("MinValue", nil)
+	if type(raw) == "string" then
+		Webhook.MinValue = ParseAmount(raw)
+	end
+	return Webhook.MinValue
+end
+
+local function FormatMutationDiscord(mutations)
+	if type(mutations) ~= "table" or #mutations == 0 then
+		return "Normal"
+	end
+	local parts = {}
+	for _, mutation in ipairs(mutations) do
+		table.insert(parts, string.format("**%s**", tostring(mutation.Label)))
+	end
+	return table.concat(parts, "  ·  ")
 end
 
 local function ResolveThumbnail(iconUrl)
@@ -2454,7 +2569,7 @@ local function ResolveThumbnail(iconUrl)
 	end
 	Webhook.ThumbnailCache[assetId] = false
 
-	local requestFn = GetHttpRequest()
+	local requestFn = ResolveHttpRequest()
 	if not requestFn then
 		return nil
 	end
@@ -2479,22 +2594,21 @@ end
 
 local function BuildWebhookEmbed(title, payload, source)
 	local assetInfo = payload.Asset
-	local mutations = payload.Mutations or {}
-	local mutationText = BuildMutationText(mutations)
 	local thumbnail = assetInfo and ResolveThumbnail(assetInfo.EggIcon) or nil
+	local rarityName = string.upper(assetInfo and assetInfo.Rarity or "Common")
+
+	local description = string.format(
+		"### %s\n`%s`  ·  `%s`  ·  `%s`",
+		assetInfo and assetInfo.Name or payload.Category,
+		FormatRate(payload.Income),
+		rarityName,
+		string.format("%.2fx", payload.Scale)
+	)
 
 	local embed = {
-		author = {
-			name = string.format("%s  ·  Onium Hub", LocalPlayer.DisplayName or LocalPlayer.Name or "Player"),
-		},
+		author = { name = string.format("%s  ·  Onium Hub", LocalPlayer.DisplayName or LocalPlayer.Name or "Player") },
 		title = title,
-		description = string.format(
-			"**%s**\n`%s`  ·  `%s`  ·  `%s`",
-			assetInfo and assetInfo.Name or payload.Category,
-			FormatRate(payload.Income),
-			string.upper(assetInfo and assetInfo.Rarity or "Common"),
-			string.format("%.2fx", payload.Scale)
-		),
+		description = description,
 		color = assetInfo and FormatColorInt(assetInfo.RarityColor) or FormatColorInt(COLORS.Text),
 		fields = {
 			{ name = "Income", value = string.format("`%s`", FormatRate(payload.Income)), inline = true },
@@ -2504,8 +2618,8 @@ local function BuildWebhookEmbed(title, payload, source)
 				value = payload.Weight and string.format("`%s`", FormatWeight(payload.Weight)) or "`-`",
 				inline = true,
 			},
-			{ name = "Rarity", value = string.format("`%s`", string.upper(assetInfo and assetInfo.Rarity or "Common")), inline = true },
-			{ name = "Mutation", value = mutationText ~= "" and mutationText or "`Normal`", inline = true },
+			{ name = "Rarity", value = string.format("`%s`", rarityName), inline = true },
+			{ name = "Mutation", value = FormatMutationDiscord(payload.Mutations), inline = true },
 			{ name = "Source", value = string.format("`%s`", source), inline = true },
 		},
 		footer = { text = "Onium Hub  ·  Steal An Egg" },
@@ -2517,6 +2631,51 @@ local function BuildWebhookEmbed(title, payload, source)
 	return embed
 end
 
+local function SendWebhookBody(url, embed)
+	local requestFn = ResolveHttpRequest()
+	if not requestFn then
+		if not Webhook.WarnedRequest then
+			Webhook.WarnedRequest = true
+			LogWebhook("executor ini tidak menyediakan request/syn.request, webhook tidak bisa mengirim")
+		end
+		return false
+	end
+
+	local body = {
+		embeds = { embed },
+		allowed_mentions = { parse = { "everyone" } },
+	}
+	if Webhook.PingEveryone then
+		body.content = "@everyone"
+	end
+
+	local encodeOk, encoded = pcall(function()
+		return HttpService:JSONEncode(body)
+	end)
+	if not encodeOk then
+		LogWebhook("gagal encode embed: " .. tostring(encoded))
+		return false
+	end
+
+	local callOk, response = pcall(requestFn, {
+		Url = url,
+		Method = "POST",
+		Headers = { ["Content-Type"] = "application/json" },
+		Body = encoded,
+	})
+	if not callOk then
+		LogWebhook("request error: " .. tostring(response))
+		return false
+	end
+
+	local status = type(response) == "table" and (response.StatusCode or response.Status or response.status) or nil
+	if type(status) == "number" and status >= 300 then
+		LogWebhook(string.format("Discord menolak (HTTP %d): %s", status, tostring(response.Body)))
+		return false
+	end
+	return true
+end
+
 local function WebhookSending()
 	if Webhook.Sending then
 		return
@@ -2525,23 +2684,18 @@ local function WebhookSending()
 	task.spawn(function()
 		while #Webhook.Queue > 0 do
 			local job = table.remove(Webhook.Queue, 1)
-			local requestFn = GetHttpRequest()
-			if requestFn and Webhook.Url ~= "" then
-				local body = {
-					embeds = { job.Embed },
-					allowed_mentions = { parse = { "everyone" } },
-				}
-				if Webhook.PingEveryone then
-					body.content = "@everyone"
+			local url = CurrentUrl()
+			if url == "" then
+				if not Webhook.WarnedUrl then
+					Webhook.WarnedUrl = true
+					LogWebhook("Webhook URL masih kosong, isi dulu di group Discord Webhook")
 				end
-				pcall(function()
-					requestFn({
-						Url = Webhook.Url,
-						Method = "POST",
-						Headers = { ["Content-Type"] = "application/json" },
-						Body = HttpService:JSONEncode(body),
-					})
-				end)
+			else
+				local sent = SendWebhookBody(url, job.Embed)
+				if not sent then
+					task.wait(3)
+					SendWebhookBody(url, job.Embed)
+				end
 			end
 			task.wait(WEBHOOK_SPACING)
 		end
@@ -2549,19 +2703,66 @@ local function WebhookSending()
 	end)
 end
 
-local function EnqueueEggWebhook(eventName, category, scale, mutations, source)
-	if not Webhook.Events[eventName] or Webhook.Url == "" then
+local function QueueTestEmbed()
+	local url = CurrentUrl()
+	if url == "" or Webhook.LastTestedUrl == url then
 		return
 	end
+	if not string.find(url, "/api/webhooks/%d+/") then
+		return
+	end
+	Webhook.LastTestedUrl = url
+
+	local executor = ReadExecutorName()
+
+	table.insert(Webhook.Queue, {
+		Embed = {
+			title = "Webhook Connected",
+			description = string.format(
+				"**Onium Hub** siap mengirim notifikasi egg.\n`%s`  ·  `%s`",
+				executor,
+				LocalPlayer.DisplayName or LocalPlayer.Name or "Player"
+			),
+			color = FormatColorInt(COLORS.IncomeTop),
+			footer = { text = "Onium Hub  ·  Steal An Egg" },
+			timestamp = DateTime.now():ToIsoDate(),
+		},
+	})
+	WebhookSending()
+end
+
+local function SchedulePersist(withTest)
+	if Webhook.PersistToken then
+		task.cancel(Webhook.PersistToken)
+	end
+	Webhook.PersistToken = task.delay(1, function()
+		Webhook.PersistToken = nil
+		SaveWebhook()
+		if withTest then
+			QueueTestEmbed()
+		end
+	end)
+end
+
+local function EnqueueEggWebhook(eventName, category, scale, mutations, source)
+	if not Webhook.Events[eventName] then
+		return
+	end
+	if CurrentUrl() == "" then
+		if not Webhook.WarnedUrl then
+			Webhook.WarnedUrl = true
+			LogWebhook("event tertangkap tapi URL kosong, embed tidak dikirim")
+		end
+		return
+	end
+	local assetInfo = ReadAssetInfo(category)
 	if next(Webhook.EggFilter) ~= nil then
-		local assetInfo = ReadAssetInfo(category)
 		local name = assetInfo and assetInfo.Name or tostring(category)
 		if Webhook.EggFilter[name] ~= true then
 			return
 		end
 	end
 
-	local assetInfo = ReadAssetInfo(category)
 	if Webhook.MinRarity > 0 and (not assetInfo or assetInfo.RarityRank < Webhook.MinRarity) then
 		return
 	end
@@ -2573,7 +2774,7 @@ local function EnqueueEggWebhook(eventName, category, scale, mutations, source)
 			1
 		)
 	end
-	if income < Webhook.MinValue then
+	if income < CurrentMinValue() then
 		return
 	end
 
@@ -2586,71 +2787,89 @@ local function EnqueueEggWebhook(eventName, category, scale, mutations, source)
 		Mutations = ReadMutations(mutations),
 	}
 
-	local key = string.format("%s|%s|%.3f|%s", eventName, payload.Category, scale, table.concat(mutations or {}, ","))
-	if Webhook.Sent[key] then
-		return
-	end
-	Webhook.Sent[key] = os.clock()
-
-	task.spawn(function()
-		table.insert(Webhook.Queue, { Embed = BuildWebhookEmbed(eventName, payload, source) })
-		WebhookSending()
-	end)
+	table.insert(Webhook.Queue, { Embed = BuildWebhookEmbed(eventName, payload, source) })
+	WebhookSending()
 end
 
-local function PollFuseWebhook()
-	local state = ReadFuseState()
-	if state.Locked and #state.Items > 0 then
-		Webhook.LastFuseCategory = state.Items[1].Category
-		Webhook.LastFuseScale = state.Items[1].Scale
-	end
-	if state.Reward and not Webhook.RewardSeen then
-		Webhook.RewardSeen = true
-		Webhook.LastFuseAt = os.clock()
-		if Webhook.LastFuseCategory then
-			EnqueueEggWebhook(
-				"Egg Fused",
-				Webhook.LastFuseCategory,
-				Webhook.LastFuseScale,
-				{},
-				"Fuse Machine"
-			)
+local function ReadSaveProfile()
+	if type(SaveModule) ~= "table" or type(SaveModule.Peek) ~= "function" then
+		if not Webhook.WarnedSave then
+			Webhook.WarnedSave = true
+			LogWebhook("modul Shared.Save tidak tersedia, event fuse & inventory tidak aktif")
 		end
-	elseif not state.Reward then
-		Webhook.RewardSeen = false
+		return nil
+	end
+	local callOk, profile = pcall(SaveModule.Peek, LocalPlayer)
+	if not callOk or type(profile) ~= "table" then
+		return nil
+	end
+	if type(profile.Inventory) ~= "table" and type(profile.Data) == "table" then
+		return profile.Data
+	end
+	return profile
+end
+
+local function PollFuseWebhook(profile)
+	local slots = type(profile) == "table" and type(profile.FusionSlots) == "table" and profile.FusionSlots or {}
+	local inventory = type(profile) == "table" and type(profile.Inventory) == "table" and profile.Inventory or {}
+	local firstRecord = slots[1] ~= nil and inventory[slots[1]] or nil
+	if type(firstRecord) == "table" then
+		Webhook.FuseWatch = {
+			Category = tostring(firstRecord.Category),
+			Scale = tonumber(firstRecord.Scale) or 1,
+			Mutations = type(firstRecord.Mutations) == "table" and firstRecord.Mutations or {},
+		}
+	end
+
+	local reward = type(profile) == "table" and profile.FusionEggReward ~= nil and profile.FusionEggReward ~= false
+	if reward and not Webhook.FuseReward then
+		Webhook.FuseReward = true
+		Webhook.FuseDoneAt = os.clock()
+		local watch = Webhook.FuseWatch
+		if watch then
+			EnqueueEggWebhook("Egg Fused", watch.Category, watch.Scale, watch.Mutations, "Fuse Machine")
+		end
+	elseif not reward then
+		Webhook.FuseReward = false
 	end
 end
 
-local function PollInventoryWebhook()
-	local profile = nil
-	if type(SaveModule) == "table" and type(SaveModule.Peek) == "function" then
-		local callOk, peeked = pcall(SaveModule.Peek, LocalPlayer)
-		if callOk and type(peeked) == "table" then
-			profile = peeked
-		end
-	end
+local function PollInventoryWebhook(profile)
 	if type(profile) ~= "table" or type(profile.Inventory) ~= "table" then
 		return
 	end
+	local inventory = profile.Inventory
 	if Webhook.InventorySeen == nil then
 		Webhook.InventorySeen = {}
-		for uid in pairs(profile.Inventory) do
+		for uid in pairs(inventory) do
 			Webhook.InventorySeen[uid] = true
 		end
 		return
 	end
-	for uid, record in pairs(profile.Inventory) do
+
+	for uid, record in pairs(inventory) do
 		if not Webhook.InventorySeen[uid] then
 			Webhook.InventorySeen[uid] = true
-			if type(record) == "table" and os.clock() - Webhook.LastFuseAt > 6 then
-				EnqueueEggWebhook(
-					"Egg Stolen",
-					record.Category,
-					tonumber(record.Scale) or 1,
-					type(record.Mutations) == "table" and record.Mutations or {},
-					"Inventory"
-				)
+			if type(record) == "table" then
+				local isFuseResult = Webhook.FuseWatch
+					and tostring(record.Category) == Webhook.FuseWatch.Category
+					and os.clock() - Webhook.FuseDoneAt < WEBHOOK_FUSE_WINDOW
+				if not isFuseResult then
+					EnqueueEggWebhook(
+						"Egg Stolen",
+						record.Category,
+						tonumber(record.Scale) or 1,
+						type(record.Mutations) == "table" and record.Mutations or {},
+						"Inventory"
+					)
+				end
 			end
+		end
+	end
+
+	for uid in pairs(Webhook.InventorySeen) do
+		if inventory[uid] == nil then
+			Webhook.InventorySeen[uid] = nil
 		end
 	end
 end
@@ -2669,14 +2888,10 @@ local function PollPenWebhook()
 end
 
 local function PollWebhook()
-	PollFuseWebhook()
-	PollInventoryWebhook()
+	local profile = ReadSaveProfile()
+	PollFuseWebhook(profile)
+	PollInventoryWebhook(profile)
 	PollPenWebhook()
-	for key, sentAt in pairs(Webhook.Sent) do
-		if os.clock() - sentAt > 300 then
-			Webhook.Sent[key] = nil
-		end
-	end
 end
 
 local function ReadRarityOptions()
@@ -2742,7 +2957,7 @@ end
 function Prediction.BuildWebhook(groupbox)
 	local stored = ReadStoredWebhook()
 	if type(stored) == "table" then
-		Webhook.Url = type(stored.Url) == "string" and stored.Url or ""
+		Webhook.Url = NormalizeUrl(stored.Url)
 		Webhook.PingEveryone = stored.PingEveryone == true
 		Webhook.MinRarity = tonumber(stored.MinRarity) or 0
 		Webhook.MinValue = tonumber(stored.MinValue) or 0
@@ -2759,7 +2974,7 @@ function Prediction.BuildWebhook(groupbox)
 	local rarityValues, rarityRanks = ReadRarityOptions()
 	local rarityDefault = "All"
 	for _, rarityName in ipairs(rarityValues) do
-		if rarityRanks[rarityName] == Webhook.MinRarity and Webhook.MinRarity > 0 then
+		if Webhook.MinRarity > 0 and rarityRanks[rarityName] == Webhook.MinRarity then
 			rarityDefault = rarityName
 		end
 	end
@@ -2771,16 +2986,16 @@ function Prediction.BuildWebhook(groupbox)
 		end
 	end
 
-	groupbox:AddInput("Input_Webhook_Url", {
+	Webhook.Inputs.Url = groupbox:AddInput("Input_Webhook_Url", {
 		Text = "Webhook URL",
 		Placeholder = "https://discord.com/api/webhooks/...",
 		Default = Webhook.Url,
-		Finished = true,
 		ClearTextOnFocus = false,
 		Tooltip = "Discord webhook that receives the egg embed",
 		Callback = function(value)
-			Webhook.Url = tostring(value or "")
-			SaveWebhook()
+			Webhook.Url = NormalizeUrl(value)
+			Webhook.WarnedUrl = false
+			SchedulePersist(true)
 		end,
 	})
 
@@ -2822,17 +3037,15 @@ function Prediction.BuildWebhook(groupbox)
 		end,
 	})
 
-	groupbox:AddInput("Input_Webhook_MinValue", {
+	Webhook.Inputs.MinValue = groupbox:AddInput("Input_Webhook_MinValue", {
 		Text = "Webhook Min Value",
 		Placeholder = "0",
 		Default = Webhook.MinValue > 0 and tostring(math.floor(Webhook.MinValue)) or "",
-		Finished = true,
 		ClearTextOnFocus = false,
-		Numeric = false,
 		Tooltip = "Minimum income per second, accepts 250k, 50m, 1.5b",
 		Callback = function(value)
 			Webhook.MinValue = ParseAmount(value)
-			SaveWebhook()
+			SchedulePersist(false)
 		end,
 	})
 
@@ -2859,6 +3072,13 @@ function Prediction.BuildWebhook(groupbox)
 		end,
 	})
 
+	LogWebhook(string.format(
+		"aktif · executor=%s · transport=%s · url=%s",
+		ReadExecutorName(),
+		ResolveHttpRequest() and "ada" or "tidak ada",
+		CurrentUrl() ~= "" and "tersimpan" or "kosong"
+	))
+
 	Webhook.NextPollAt = os.clock() + WEBHOOK_POLL
 	Webhook.Connection = RunService.Heartbeat:Connect(function()
 		local now = os.clock()
@@ -2866,7 +3086,10 @@ function Prediction.BuildWebhook(groupbox)
 			return
 		end
 		Webhook.NextPollAt = now + WEBHOOK_POLL
-		PollWebhook()
+		local pollOk, pollError = pcall(PollWebhook)
+		if not pollOk then
+			LogWebhook("poll error: " .. tostring(pollError))
+		end
 	end)
 end
 
