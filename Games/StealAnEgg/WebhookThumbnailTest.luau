@@ -92,7 +92,7 @@ end
 local function postJson(url, payload)
 	local body = encode(payload)
 	if not body then
-		return "encode gagal"
+		return "encode failed"
 	end
 	local separator = string.find(url, "?", 1, true) and "&" or "?"
 	local response = call({
@@ -102,7 +102,7 @@ local function postJson(url, payload)
 		Body = body,
 	})
 	if not response then
-		return "request gagal"
+		return "request failed"
 	end
 	local status = statusOf(response)
 	if status ~= nil and status >= 300 then
@@ -114,7 +114,7 @@ end
 local function postAttachment(url, payload, fileName, bytes)
 	local body = encode(payload)
 	if not body then
-		return "encode gagal"
+		return "encode failed"
 	end
 	local boundary = "----OniumTest" .. tostring(math.random(100000, 999999))
 	local multipart = table.concat({
@@ -136,7 +136,7 @@ local function postAttachment(url, payload, fileName, bytes)
 		Body = multipart,
 	})
 	if not response then
-		return "request gagal"
+		return "request failed"
 	end
 	local status = statusOf(response)
 	if status ~= nil and status >= 300 then
@@ -165,11 +165,10 @@ local function chiliThumbnail(assetId)
 		"https://thumbnails.roblox.com/v1/assets?assetIds=%s&returnPolicy=PlaceHolder&size=420x420&format=Png&isCircular=false",
 		assetId
 	)
-	log("GET " .. apiUrl)
 
 	local response = call({ Url = apiUrl, Method = "GET" })
 	if not response then
-		return nil, "request gagal, executor tidak bisa menghubungi roblox"
+		return nil, "request failed, executor cannot reach roblox"
 	end
 
 	local status = statusOf(response)
@@ -185,7 +184,7 @@ local function chiliThumbnail(assetId)
 	end)
 	local entry = okDecode and type(decoded) == "table" and type(decoded.data) == "table" and decoded.data[1] or nil
 	if type(entry) ~= "table" then
-		return nil, "respons bukan json thumbnail"
+		return nil, "response is not thumbnail json"
 	end
 
 	local state = tostring(entry.state)
@@ -194,10 +193,10 @@ local function chiliThumbnail(assetId)
 		return nil, "state=" .. state
 	end
 	if type(imageUrl) ~= "string" or imageUrl == "" then
-		return nil, "state=Completed tapi imageUrl kosong"
+		return nil, "state=Completed but imageUrl is empty"
 	end
 	if not string.find(imageUrl, "/Image/", 1, true) then
-		return nil, "state=Completed tapi imageUrl placeholder:\n" .. imageUrl
+		return nil, "state=Completed but imageUrl is a placeholder:\n" .. imageUrl
 	end
 	return imageUrl
 end
@@ -288,20 +287,19 @@ end
 
 local function renderInGame(assetId)
 	if type(AssetService.CreateEditableImageAsync) ~= "function" then
-		return nil, "AssetService.CreateEditableImageAsync tidak ada di executor ini"
+		return nil, "CreateEditableImageAsync unavailable in this executor"
 	end
 
 	local created, image = pcall(function()
 		return AssetService:CreateEditableImageAsync("rbxassetid://" .. assetId)
 	end)
 	if not created or not image then
-		return nil, "CreateEditableImageAsync ditolak: " .. tostring(image)
+		return nil, "CreateEditableImageAsync rejected: " .. tostring(image)
 	end
 
 	local size = image.Size
 	local width = math.floor(size.X)
 	local height = math.floor(size.Y)
-	log(string.format("editable image siap: %dx%d", width, height))
 
 	local readOk, pixels = pcall(function()
 		return image:ReadPixelsBuffer(Vector2.zero, size)
@@ -310,17 +308,16 @@ local function renderInGame(assetId)
 		pcall(function()
 			image:Destroy()
 		end)
-		return nil, "ReadPixelsBuffer gagal: " .. tostring(pixels)
+		return nil, "ReadPixelsBuffer failed: " .. tostring(pixels)
 	end
 
 	local bufferSize = buffer.len(pixels)
 	local bytesPerPixel = bufferSize / (width * height)
-	log(string.format("buffer %d byte, %s byte per piksel", bufferSize, tostring(bytesPerPixel)))
 	if bytesPerPixel ~= 4 then
 		pcall(function()
 			image:Destroy()
 		end)
-		return nil, string.format("format piksel tidak dikenal (%s byte per piksel)", tostring(bytesPerPixel))
+		return nil, string.format("unknown pixel format (%s bytes per pixel)", tostring(bytesPerPixel))
 	end
 
 	local rows = {}
@@ -443,7 +440,7 @@ assetBox.PlaceholderText = DEFAULT_ASSET_ID
 
 local chiliButton = makeButton("Send Chili Path")
 local renderButton = makeButton("Send Render In-Game")
-local statusLabel = makeLabel("Pilih salah satu tombol", 44, Color3.fromRGB(255, 194, 77))
+local statusLabel = makeLabel("Pick a button", 44, Color3.fromRGB(255, 194, 77))
 
 local running = false
 
@@ -451,11 +448,11 @@ local function currentInputs()
 	local url = tostring(urlBox.Text or ""):gsub("%s", "")
 	local assetId = tostring(assetBox.Text or ""):match("%d+")
 	if url == "" then
-		statusLabel.Text = "URL webhook masih kosong"
+		statusLabel.Text = "Webhook url is empty"
 		return nil
 	end
 	if not assetId then
-		statusLabel.Text = "Asset ID masih kosong"
+		statusLabel.Text = "Asset id is empty"
 		return nil
 	end
 	return url, assetId
@@ -509,12 +506,12 @@ chiliButton.MouseButton1Click:Connect(function()
 		)
 		local line
 		if imageUrl then
-			line = "Chili path: gambar ditemukan"
+			line = "chili path: image found"
 		else
-			line = "Chili path GAGAL · " .. tostring(reason)
+			line = "chili path failed · " .. tostring(reason)
 		end
 		if sendError then
-			line = line .. " · kirim: " .. tostring(sendError)
+			line = line .. " · send: " .. tostring(sendError)
 		end
 		log(line)
 		statusLabel.Text = line
@@ -547,12 +544,12 @@ renderButton.MouseButton1Click:Connect(function()
 		)
 		local line
 		if pngBytes then
-			line = string.format("Render: png %d byte terkirim", #pngBytes)
+			line = string.format("render: png %d bytes sent", #pngBytes)
 		else
-			line = "Render GAGAL · " .. tostring(reason)
+			line = "render failed · " .. tostring(reason)
 		end
 		if sendError then
-			line = line .. " · kirim: " .. tostring(sendError)
+			line = line .. " · send: " .. tostring(sendError)
 		end
 		log(line)
 		statusLabel.Text = line
@@ -561,4 +558,4 @@ renderButton.MouseButton1Click:Connect(function()
 	end)
 end)
 
-log("ui siap · tombol Send Chili Path dan Send Render In-Game")
+log("ui ready")

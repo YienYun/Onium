@@ -2616,7 +2616,7 @@ end
 local function ReadThumbnailUrl(apiUrl, requireImagePath)
 	local response = HttpCall({ Url = apiUrl, Method = "GET" })
 	if not response then
-		return nil, "request gagal"
+		return nil, "request failed"
 	end
 	if ReadStatus(response) ~= 200 then
 		return nil, "HTTP " .. tostring(ReadStatus(response))
@@ -2624,14 +2624,14 @@ local function ReadThumbnailUrl(apiUrl, requireImagePath)
 	local data = DecodeJson(response.Body)
 	local entry = data and type(data.data) == "table" and data.data[1] or nil
 	if type(entry) ~= "table" then
-		return nil, "data kosong"
+		return nil, "empty data"
 	end
 	if entry.state ~= "Completed" then
 		return nil, "state " .. tostring(entry.state)
 	end
 	local imageUrl = entry.imageUrl
 	if type(imageUrl) ~= "string" or imageUrl == "" then
-		return nil, "imageUrl kosong"
+		return nil, "empty imageUrl"
 	end
 	if requireImagePath and not string.find(imageUrl, "/Image/", 1, true) then
 		return nil, "placeholder"
@@ -2835,7 +2835,7 @@ local function RenderAssetPng(assetId)
 		return AssetService:CreateEditableImageAsync("rbxassetid://" .. assetId)
 	end)
 	if not created or not image then
-		return nil, "render ditolak: " .. tostring(image)
+		return nil, "render rejected: " .. tostring(image)
 	end
 
 	local size = image.Size
@@ -2844,7 +2844,7 @@ local function RenderAssetPng(assetId)
 		pcall(function()
 			image:Destroy()
 		end)
-		return nil, "ukuran gambar kosong"
+		return nil, "empty image size"
 	end
 
 	local readOk, pixels = pcall(function()
@@ -2854,10 +2854,10 @@ local function RenderAssetPng(assetId)
 		image:Destroy()
 	end)
 	if not readOk or type(pixels) ~= "buffer" then
-		return nil, "ReadPixelsBuffer gagal: " .. tostring(pixels)
+		return nil, "ReadPixelsBuffer failed: " .. tostring(pixels)
 	end
 	if buffer.len(pixels) ~= width * height * 4 then
-		return nil, "format piksel tidak didukung"
+		return nil, "unsupported pixel format"
 	end
 
 	local target = math.min(WEBHOOK_RENDER_SIZE, math.max(width, height))
@@ -2876,7 +2876,6 @@ local function ResolveAttachment(source)
 		local rendered, renderError = RenderAssetPng(source.AssetId)
 		if rendered then
 			Webhook.AttachmentCache[source.Key] = rendered
-			LogWebhook(string.format("gambar dirender di dalam game (%d byte) untuk %s", #rendered, source.Key))
 			return rendered
 		end
 		Webhook.LastThumbnailError = renderError
@@ -2991,7 +2990,7 @@ end
 local function SendWebhookBody(url, embed, attachment)
 	local built = BuildWebhookPayload(embed, attachment)
 	if not built then
-		LogWebhook("gagal encode payload embed")
+		LogWebhook("failed to encode embed payload")
 		return false, nil
 	end
 
@@ -3005,14 +3004,14 @@ local function SendWebhookBody(url, embed, attachment)
 	if not response then
 		if not Webhook.WarnedRequest then
 			Webhook.WarnedRequest = true
-			LogWebhook("executor ini tidak menyediakan request/syn.request, webhook tidak bisa mengirim")
+			LogWebhook("no http transport available, webhook cannot send")
 		end
 		return false, nil
 	end
 
 	local status = ReadStatus(response)
 	if status ~= nil and status >= 300 then
-		LogWebhook(string.format("Discord menolak kiriman (HTTP %d): %s", status, tostring(response.Body)))
+		LogWebhook(string.format("discord rejected the message (HTTP %d): %s", status, tostring(response.Body)))
 		return false, nil
 	end
 	return true, DecodeJson(response.Body)
@@ -3071,13 +3070,12 @@ local function RepairSending()
 					if imageUrl then
 						job.Embed.thumbnail = { url = imageUrl }
 						if PatchWebhookMessage(job.Base, job.MessageId, job.Embed) then
-							LogWebhook("thumbnail berhasil ditempel ke pesan sebelumnya")
 						else
-							LogWebhook("gagal menempelkan thumbnail ke pesan lama")
+							LogWebhook("failed to patch the thumbnail into the previous message")
 						end
 						table.remove(Webhook.Repairs, index)
 					elseif string.find(tostring(Webhook.LastThumbnailError), "Blocked", 1, true) then
-						LogWebhook("asset diblokir Roblox, thumbnail tidak tersedia: " .. job.Thumbnail.Key)
+						LogWebhook("thumbnail blocked by roblox: " .. job.Thumbnail.Key)
 						table.remove(Webhook.Repairs, index)
 					else
 						job.Step = math.min(job.Step * 1.6, WEBHOOK_REPAIR_STEP_MAX)
@@ -3109,7 +3107,7 @@ local function WebhookSending()
 			if url == "" then
 				if not Webhook.WarnedUrl then
 					Webhook.WarnedUrl = true
-					LogWebhook("Webhook URL masih kosong, isi dulu di group Discord Webhook")
+					LogWebhook("webhook url is empty, fill it in the Discord Webhook group")
 				end
 			else
 				local attachment = AttachThumbnail(job)
@@ -3138,7 +3136,7 @@ local function WebhookSending()
 						RepairSending()
 					end
 					LogWebhook(string.format(
-						"thumbnail belum siap (%s) untuk %s",
+						"thumbnail not ready (%s) for %s",
 						tostring(Webhook.LastThumbnailError),
 						job.Thumbnail.Key
 					))
@@ -3166,7 +3164,7 @@ local function QueueTestEmbed()
 		Embed = {
 			title = "Webhook Connected",
 			description = string.format(
-				"**Onium Hub** siap mengirim notifikasi egg.\n`%s`  ·  `%s`",
+				"**Onium Hub** is connected and ready to post egg notifications.\n`%s`  ·  `%s`",
 				executor,
 				LocalPlayer.DisplayName or LocalPlayer.Name or "Player"
 			),
@@ -3198,7 +3196,7 @@ local function EnqueueEggWebhook(eventName, category, scale, mutations, source)
 	if CurrentUrl() == "" then
 		if not Webhook.WarnedUrl then
 			Webhook.WarnedUrl = true
-			LogWebhook("event tertangkap tapi URL kosong, embed tidak dikirim")
+			LogWebhook("event captured but the url is empty, embed skipped")
 		end
 		return
 	end
@@ -3247,7 +3245,7 @@ local function ReadSaveProfile()
 	if type(SaveModule) ~= "table" or type(SaveModule.Peek) ~= "function" then
 		if not Webhook.WarnedSave then
 			Webhook.WarnedSave = true
-			LogWebhook("modul Shared.Save tidak tersedia, event fuse & inventory tidak aktif")
+			LogWebhook("Shared.Save is unavailable, fuse and inventory events disabled")
 		end
 		return nil
 	end
@@ -3333,7 +3331,7 @@ local function PollEggInventoryWebhook(profile)
 	if not eggInventory then
 		if type(profile) == "table" and not Webhook.WarnedInventory then
 			Webhook.WarnedInventory = true
-			LogWebhook("EggInventory tidak ditemukan di profil, event egg tidak bisa dipantau")
+			LogWebhook("EggInventory is missing from the profile, egg events disabled")
 		end
 		return
 	end
@@ -3343,7 +3341,7 @@ local function PollEggInventoryWebhook(profile)
 		for uid in pairs(eggInventory) do
 			RememberEgg(tostring(uid))
 		end
-		LogWebhook(string.format("%d egg sudah ada di inventory, notifikasi mulai dari egg berikutnya", Webhook.EggSeenCount))
+		LogWebhook(string.format("tracking %d existing eggs, only new eggs will be posted", Webhook.EggSeenCount))
 		return
 	end
 
@@ -3353,7 +3351,6 @@ local function PollEggInventoryWebhook(profile)
 			RememberEgg(uidText)
 			if uidText ~= Webhook.FuseRewardUid then
 				local category = tostring(record.AssetCategory)
-				LogWebhook(string.format("egg baru terdeteksi: %s", category))
 				EnqueueEggWebhook(
 					"Egg Stolen",
 					category,
@@ -3582,10 +3579,10 @@ function Prediction.BuildWebhook(groupbox)
 	end
 
 	LogWebhook(string.format(
-		"aktif · executor=%s · transport=%s · url=%s",
+		"ready · executor=%s · transport=%s · url=%s",
 		ReadExecutorName(),
-		ResolveHttpRequest() and "ada" or "tidak ada",
-		CurrentUrl() ~= "" and "tersimpan" or "kosong"
+		ResolveHttpRequest() and "ok" or "missing",
+		CurrentUrl() ~= "" and "saved" or "empty"
 	))
 
 	Webhook.NextPollAt = os.clock() + WEBHOOK_POLL
