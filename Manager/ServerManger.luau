@@ -64,6 +64,23 @@ local function TrackConnection(connectionObj)
 	return connectionObj
 end
 
+-- Restricted signals (RobloxScript capability) throw on connect, so the getter stays inside the pcall.
+local function TryConnect(getSignal, callback)
+	local connectOk, connectionObj = pcall(function()
+		local signalObject = getSignal()
+		if not signalObject then
+			return nil
+		end
+		return signalObject:Connect(callback)
+	end)
+
+	if not connectOk then
+		return nil
+	end
+
+	return TrackConnection(connectionObj)
+end
+
 local function Notify(titleText, bodyText)
 	local library = ServerManager.Library
 	if library and type(library.Notify) == "function" then
@@ -627,7 +644,9 @@ local function HasErrorPrompt(promptOverlay)
 end
 
 local function WatchDisconnectPrompts()
-	TrackConnection(GuiService.ErrorMessageChanged:Connect(function()
+	TryConnect(function()
+		return GuiService.ErrorMessageChanged
+	end, function()
 		task.wait(0.3)
 		if not IsAlive() then
 			return
@@ -645,7 +664,7 @@ local function WatchDisconnectPrompts()
 			return GuiService:GetErrorMessage()
 		end)
 		HandleDisconnectMessage(errorOk and errorMessage or "disconnected")
-	end))
+	end)
 
 	task.spawn(function()
 		local promptOk, promptGui = pcall(function()
@@ -662,14 +681,16 @@ local function WatchDisconnectPrompts()
 			return
 		end
 
-		TrackConnection(promptOverlay.ChildAdded:Connect(function(childInstance)
+		TryConnect(function()
+			return promptOverlay.ChildAdded
+		end, function(childInstance)
 			if childInstance.Name ~= "ErrorPrompt" then
 				return
 			end
 
 			task.wait(0.2)
 			HandleDisconnectMessage(ReadErrorMessage(childInstance))
-		end))
+		end)
 	end)
 end
 
@@ -781,12 +802,16 @@ function ServerManager:BuildServerSection(targetTab, useRightSide)
 		end,
 	})
 
-	TrackConnection(LocalPlayer.OnTeleport:Connect(function(teleportState)
+	TryConnect(function()
+		return LocalPlayer.OnTeleport
+	end, function(teleportState)
 		ServerState.LastSelfTeleportAt = teleportState == Enum.TeleportState.Failed and 0 or os.clock()
-	end))
-	TrackConnection(TeleportService.TeleportInitFailed:Connect(function(_player, teleportResult, errorMessage)
+	end)
+	TryConnect(function()
+		return TeleportService.TeleportInitFailed
+	end, function(_player, teleportResult, errorMessage)
 		HandleTeleportFailure(teleportResult, errorMessage)
-	end))
+	end)
 	WatchDisconnectPrompts()
 
 	return serverGroup
