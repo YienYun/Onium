@@ -12,6 +12,7 @@ Tujuan repo: satu sumber kebenaran yang rapi, mudah dibaca, mudah dimaintain, da
 | --- | --- | --- |
 | `Games/Steal-An-Egg.luau` | Hub utama game (single file, ±14.000 baris) | Kode produksi. Semua fitur, engine, dan UI hub ada di sini. |
 | `Library/OniumV4.luau` | UI library hub (turunan Obsidian, ±17.800 baris) | Komponen window, tab, groupbox, dan element. |
+| `Manager/` | `FpsManger.luau`, `SaveManager.luau`, `ThemeManger.luau` | Manager tab Settings (performance, config, theme). Dimuat hub lewat URL, bukan dari sini. |
 | `Source/ChiliHub.luau` | Source hasil deobfuscate (Chili Hub V3, ±53.000 baris) | **Referensi baca saja.** Bukan bahan copy-paste. |
 | `DexExploler/` | Catatan hasil eksplorasi game / Dex | Menunggu diisi. |
 | `README.md` | Dokumen ini | Peta arsitektur + aturan kerja. |
@@ -185,7 +186,7 @@ Cara pakai yang benar:
 
 Hal yang perlu keputusan sebelum lanjut:
 
-1. **Library di-load dari URL, bukan dari repo.** `LIBRARY_URL` menunjuk ke repo `N3-Project`, dan `SaveManager`/`ThemeManager`/`FpsManager` juga diambil dari repo lain. Artinya mengedit `Library/OniumV4.luau` di sini tidak mengubah apa yang dijalankan hub sampai file di URL ikut diperbarui.
+1. **Library dan Manager di-load dari URL, bukan dari repo.** `LIBRARY_URL` menunjuk ke repo `N3-Project`; `SaveManager`/`ThemeManager` diambil dari `MANAGER_REPO` (LuxyG15/N3-Hub) dan `FpsManager` dari ZedFu3/N3-Hub. Artinya mengedit `Library/OniumV4.luau` atau `Manager/*` di repo ini tidak mengubah apa yang dijalankan hub sampai file di URL ikut diperbarui, dan nama file di URL (`FpsManager.luau`) berbeda dari nama di repo (`FpsManger.luau`).
 2. **Hierarki section 5 menyesatkan.** 5A–5Q berada di bawah judul "Normal Auto Steal", dan 5D memuat 5E–5P di dalam blok `do ... end` miliknya. Secara logika isinya sudah benar, hanya penamaan/judulnya yang membuat pembaca salah kira.
 3. **Unload handler manual.** Setiap flag di-`false`-kan satu per satu. Setiap fitur baru wajib menambah baris di sini, kalau tidak toggle bisa tertinggal menyala setelah unload.
 
