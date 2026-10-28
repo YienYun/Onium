@@ -1,16 +1,13 @@
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
+local AssetService = game:GetService("AssetService")
 
 local LocalPlayer = Players.LocalPlayer
 local STORAGE = "Onium/StealAnEgg_Webhook.json"
 local LOG = "[Onium Test]"
 local PNG_SIGNATURE = "\137PNG\r\n\26\n"
-local JPEG_SIGNATURE = "\255\216\255"
 local DEFAULT_ASSET_ID = "102849850756685"
-local THUMBNAIL_API = "https://%s/v1/assets?assetIds=%s&returnPolicy=PlaceHolder&size=420x420&format=Png&isCircular=false"
-local ASSET_IMAGE_API = "https://%s/asset-thumbnail/image?assetId=%s&width=420&height=420&format=png"
-local ASSET_DELIVERY_V1 = "https://%s/v1/asset/?id=%s"
-local ASSET_DELIVERY_V2 = "https://%s/v2/assetId/%s"
+local RENDER_SIZE = 200
 
 local function log(message)
 	print(string.format("%s %s", LOG, message))
@@ -61,7 +58,7 @@ local function resolveRequest()
 				Headers = options.Headers,
 				Body = options.Body,
 			})
-			return { StatusCode = response.StatusCode, Body = response.Body, Headers = response.Headers }
+			return { StatusCode = response.StatusCode, Body = response.Body }
 		end)
 	end
 
@@ -70,12 +67,8 @@ end
 
 local requestFn = resolveRequest()
 
-local function statusOf(response)
-	return tonumber(response and (response.StatusCode or response.Status or response.status))
-end
-
 local function call(options)
-	if not requestFn then
+	if type(requestFn) ~= "function" then
 		return nil
 	end
 	local ok, response = pcall(requestFn, options)
@@ -85,224 +78,9 @@ local function call(options)
 	return response
 end
 
-local function isPng(payload)
-	return type(payload) == "string" and string.sub(payload, 1, 8) == PNG_SIGNATURE
+local function statusOf(response)
+	return tonumber(response and (response.StatusCode or response.Status or response.status))
 end
-
-local function isJpeg(payload)
-	return type(payload) == "string" and string.sub(payload, 1, 3) == JPEG_SIGNATURE
-end
-
-local function describe(payload)
-	if type(payload) ~= "string" or payload == "" then
-		return "body kosong"
-	end
-	if isPng(payload) then
-		return string.format("PNG %d byte", #payload)
-	end
-	if isJpeg(payload) then
-		return string.format("JPEG %d byte", #payload)
-	end
-	if string.sub(payload, 1, 1) == "<" then
-		return string.format("XML %d byte", #payload)
-	end
-	return string.format("teks %d byte", #payload)
-end
-
-local function decodeJson(payload)
-	local ok, decoded = pcall(function()
-		return HttpService:JSONDecode(tostring(payload))
-	end)
-	return ok and type(decoded) == "table" and decoded or nil
-end
-
-local function savedUrl()
-	if type(readfile) ~= "function" then
-		return ""
-	end
-	local ok, raw = pcall(readfile, STORAGE)
-	if not ok or type(raw) ~= "string" or raw == "" then
-		return ""
-	end
-	local data = decodeJson(raw)
-	return type(data) == "table" and tostring(data.Url or "") or ""
-end
-
-local function readThumbnailJson(apiUrl)
-	local response = call({ Url = apiUrl, Method = "GET" })
-	if not response then
-		return nil, "request gagal"
-	end
-	local status = statusOf(response)
-	if status ~= 200 then
-		return nil, "HTTP " .. tostring(status)
-	end
-	local data = decodeJson(response.Body)
-	local entry = data and type(data.data) == "table" and data.data[1] or nil
-	if type(entry) ~= "table" then
-		return nil, "bukan json thumbnail"
-	end
-	if entry.state ~= "Completed" then
-		return nil, "state " .. tostring(entry.state)
-	end
-	local imageUrl = entry.imageUrl
-	if type(imageUrl) ~= "string" or imageUrl == "" then
-		return nil, "imageUrl kosong"
-	end
-	if not string.find(imageUrl, "/Image/", 1, true) then
-		return nil, "url placeholder"
-	end
-	return imageUrl
-end
-
-local function readBytes(url, depth)
-	if (depth or 0) > 2 then
-		return nil, "redirect terlalu dalam"
-	end
-	local response = call({ Url = url, Method = "GET" })
-	if not response then
-		return nil, "request gagal"
-	end
-	local status = statusOf(response)
-	if status ~= 200 then
-		return nil, "HTTP " .. tostring(status)
-	end
-	local body = response.Body
-	if type(body) ~= "string" or body == "" then
-		return nil, "body kosong"
-	end
-	if isPng(body) or isJpeg(body) then
-		return body
-	end
-	local data = decodeJson(body)
-	local location = data and type(data.location) == "string" and data.location or nil
-	if location then
-		return readBytes(location, (depth or 0) + 1)
-	end
-	return nil, describe(body)
-end
-
-local function tryThumbnail(host, assetId, size)
-	local url = string.format(
-		"https://%s/v1/assets?assetIds=%s&returnPolicy=PlaceHolder&size=%s&format=Png&isCircular=false",
-		host,
-		assetId,
-		size
-	)
-	log(string.format("  GET %s", url))
-	local imageUrl, reason = readThumbnailJson(url)
-	if not imageUrl then
-		return nil, reason
-	end
-	return "url", imageUrl, string.format("%s %s", host, size)
-end
-
-local function tryBytes(url, label)
-	log(string.format("  GET %s", url))
-	local body, reason = readBytes(url)
-	if not body then
-		return nil, reason
-	end
-	if not (isPng(body) or isJpeg(body)) then
-		return nil, "bukan gambar · " .. describe(body)
-	end
-	return "bytes", body, label
-end
-
-local function resolveDecalId(assetId)
-	local url = string.format("https://www.roproxy.com/asset/?id=%s", assetId)
-	log(string.format("  GET %s", url))
-	local response = call({ Url = url, Method = "GET" })
-	if not response then
-		return nil, "request gagal"
-	end
-	local status = statusOf(response)
-	if status ~= 200 then
-		return nil, "HTTP " .. tostring(status)
-	end
-	local body = tostring(response.Body)
-	for found in string.gmatch(body, "roblox%.com/asset/%?id=(%d+)") do
-		if found ~= assetId then
-			return found
-		end
-	end
-	for found in string.gmatch(body, "rbxassetid://(%d+)") do
-		if found ~= assetId then
-			return found
-		end
-	end
-	return nil, "tidak ada id turunan · " .. describe(body)
-end
-
-local VARIANTS = {
-	{
-		Label = "A",
-		Method = "thumbnails.roblox.com 420",
-		Run = function(assetId)
-			return tryThumbnail("thumbnails.roblox.com", assetId, "420x420")
-		end,
-	},
-	{
-		Label = "B",
-		Method = "thumbnails.roproxy.com 420",
-		Run = function(assetId)
-			return tryThumbnail("thumbnails.roproxy.com", assetId, "420x420")
-		end,
-	},
-	{
-		Label = "C",
-		Method = "assetdelivery.roproxy.com",
-		Run = function(assetId)
-			return tryBytes(string.format(ASSET_DELIVERY_V1, "assetdelivery.roproxy.com", assetId), "byte lewat proxy")
-		end,
-	},
-	{
-		Label = "D",
-		Method = "www.roproxy.com asset-thumbnail",
-		Run = function(assetId)
-			return tryBytes(string.format(ASSET_IMAGE_API, "www.roproxy.com", assetId), "thumbnail lewat proxy")
-		end,
-	},
-	{
-		Label = "E",
-		Method = "thumbnails.roproxy.com 150",
-		Run = function(assetId)
-			return tryThumbnail("thumbnails.roproxy.com", assetId, "150x150")
-		end,
-	},
-	{
-		Label = "F",
-		Method = "thumbnails.roblox.com 150",
-		Run = function(assetId)
-			return tryThumbnail("thumbnails.roblox.com", assetId, "150x150")
-		end,
-	},
-	{
-		Label = "G",
-		Method = "roproxy decal -> id turunan",
-		Run = function(assetId)
-			local decalId, reason = resolveDecalId(assetId)
-			if not decalId then
-				return nil, reason
-			end
-			log(string.format("  id turunan ditemukan: %s", decalId))
-			local kind, value, detail = tryThumbnail("thumbnails.roproxy.com", decalId, "420x420")
-			if kind then
-				return kind, value, "decal " .. decalId
-			end
-			kind, value, detail = tryBytes(
-				string.format(ASSET_DELIVERY_V1, "assetdelivery.roproxy.com", decalId),
-				"byte decal " .. decalId
-			)
-			if kind then
-				return kind, value, detail
-			end
-			return nil, tostring(detail or reason)
-		end,
-	},
-}
-
-local PART_COLORS = { 5793266, 3066993, 15158332, 15844367, 10181046, 3447003 }
 
 local function encode(payload)
 	local ok, text = pcall(function()
@@ -311,7 +89,7 @@ local function encode(payload)
 	return ok and type(text) == "string" and text or nil
 end
 
-local function sendJson(url, payload)
+local function postJson(url, payload)
 	local body = encode(payload)
 	if not body then
 		return "encode gagal"
@@ -328,12 +106,12 @@ local function sendJson(url, payload)
 	end
 	local status = statusOf(response)
 	if status ~= nil and status >= 300 then
-		return string.format("HTTP %d", status)
+		return string.format("HTTP %d: %s", status, string.sub(tostring(response.Body), 1, 140))
 	end
 	return nil
 end
 
-local function sendAttachment(url, payload, fileName, mimeType, bytes)
+local function postAttachment(url, payload, fileName, bytes)
 	local body = encode(payload)
 	if not body then
 		return "encode gagal"
@@ -346,7 +124,7 @@ local function sendAttachment(url, payload, fileName, mimeType, bytes)
 		body .. "\r\n",
 		"--" .. boundary .. "\r\n",
 		string.format('Content-Disposition: form-data; name="files[0]"; filename="%s"\r\n', fileName),
-		"Content-Type: " .. mimeType .. "\r\n\r\n",
+		"Content-Type: image/png\r\n\r\n",
 		bytes .. "\r\n",
 		"--" .. boundary .. "--\r\n",
 	}, "")
@@ -362,67 +140,203 @@ local function sendAttachment(url, payload, fileName, mimeType, bytes)
 	end
 	local status = statusOf(response)
 	if status ~= nil and status >= 300 then
-		return string.format("HTTP %d: %s", status, string.sub(tostring(response.Body), 1, 120))
+		return string.format("HTTP %d: %s", status, string.sub(tostring(response.Body), 1, 140))
 	end
 	return nil
 end
 
-local function sendVariant(url, assetId, variant, index, statusLabel)
-	local kind, value, detail = variant.Run(assetId)
-	local embed = {
-		author = { name = string.format("%s  ·  Onium Hub", LocalPlayer.DisplayName or LocalPlayer.Name or "Player") },
-		title = string.format("Test %s  ·  %s", variant.Label, variant.Method),
-		color = PART_COLORS[index] or PART_COLORS[1],
-		description = string.format("asset `%s`\n%s", assetId, tostring(detail)),
-		footer = { text = "Onium Hub Thumbnail Tester" },
-		timestamp = DateTime.now():ToIsoDate(),
-	}
+local function savedUrl()
+	if type(readfile) ~= "function" then
+		return ""
+	end
+	local ok, raw = pcall(readfile, STORAGE)
+	if not ok or type(raw) ~= "string" or raw == "" then
+		return ""
+	end
+	local decoded
+	pcall(function()
+		decoded = HttpService:JSONDecode(raw)
+	end)
+	return type(decoded) == "table" and tostring(decoded.Url or "") or ""
+end
 
-	if not kind then
-		local failedEmbed = {
-			author = { name = string.format("%s  ·  Onium Hub", LocalPlayer.DisplayName or LocalPlayer.Name or "Player") },
-			title = string.format("Test %s  ·  %s  ·  GAGAL", variant.Label, variant.Method),
-			description = string.format("`%s`", tostring(detail)),
-			color = 15158332,
-			footer = { text = "Onium Hub Thumbnail Tester" },
-			timestamp = DateTime.now():ToIsoDate(),
-		}
-		local failedError = sendJson(url, { embeds = { failedEmbed } })
-		local message = string.format("Test %s GAGAL · %s", variant.Label, tostring(detail))
-		log(message)
-		if statusLabel then
-			statusLabel.Text = message
+local function chiliThumbnail(assetId)
+	local apiUrl = string.format(
+		"https://thumbnails.roblox.com/v1/assets?assetIds=%s&returnPolicy=PlaceHolder&size=420x420&format=Png&isCircular=false",
+		assetId
+	)
+	log("GET " .. apiUrl)
+
+	local response = call({ Url = apiUrl, Method = "GET" })
+	if not response then
+		return nil, "request gagal, executor tidak bisa menghubungi roblox"
+	end
+
+	local status = statusOf(response)
+	local body = tostring(response.Body or "")
+	log(string.format("status=%s body=%s", tostring(status), string.sub(body, 1, 420)))
+	if status ~= 200 then
+		return nil, "HTTP " .. tostring(status)
+	end
+
+	local decoded
+	local okDecode = pcall(function()
+		decoded = HttpService:JSONDecode(body)
+	end)
+	local entry = okDecode and type(decoded) == "table" and type(decoded.data) == "table" and decoded.data[1] or nil
+	if type(entry) ~= "table" then
+		return nil, "respons bukan json thumbnail"
+	end
+
+	local state = tostring(entry.state)
+	local imageUrl = entry.imageUrl
+	if state ~= "Completed" then
+		return nil, "state=" .. state
+	end
+	if type(imageUrl) ~= "string" or imageUrl == "" then
+		return nil, "state=Completed tapi imageUrl kosong"
+	end
+	if not string.find(imageUrl, "/Image/", 1, true) then
+		return nil, "state=Completed tapi imageUrl placeholder:\n" .. imageUrl
+	end
+	return imageUrl
+end
+
+local crcTable = {}
+for index = 0, 255 do
+	local value = index
+	for _ = 1, 8 do
+		if value % 2 == 1 then
+			value = bit32.bxor(0xEDB88320, math.floor(value / 2))
+		else
+			value = math.floor(value / 2)
 		end
-		if failedError then
-			log("  laporan gagal tidak terkirim: " .. tostring(failedError))
+	end
+	crcTable[index] = value
+end
+
+local function crc32(payload)
+	local crc = 0xFFFFFFFF
+	local length = #payload
+	local index = 1
+	while index <= length do
+		local chunkEnd = math.min(index + 2048 - 1, length)
+		for position = index, chunkEnd do
+			local byte = string.byte(payload, position)
+			crc = bit32.bxor(crcTable[bit32.band(bit32.bxor(crc, byte), 0xFF)], math.floor(crc / 256))
 		end
-		return false, false
+		index = chunkEnd + 1
+	end
+	return bit32.bxor(crc, 0xFFFFFFFF)
+end
+
+local function adler32(payload)
+	local first, second = 1, 0
+	local length = #payload
+	local index = 1
+	while index <= length do
+		local chunkEnd = math.min(index + 4096 - 1, length)
+		for position = index, chunkEnd do
+			first = (first + string.byte(payload, position)) % 65521
+			second = (second + first) % 65521
+		end
+		index = chunkEnd + 1
+	end
+	return second * 65536 + first
+end
+
+local function packUInt(value)
+	return string.char(
+		math.floor(value / 16777216) % 256,
+		math.floor(value / 65536) % 256,
+		math.floor(value / 256) % 256,
+		value % 256
+	)
+end
+
+local function chunk(tag, payload)
+	return packUInt(#payload) .. tag .. payload .. packUInt(crc32(tag .. payload))
+end
+
+local function deflateStored(raw)
+	local parts = { string.char(0x78, 0x01) }
+	local index = 1
+	local length = #raw
+	while index <= length do
+		local blockLength = math.min(65535, length - index + 1)
+		local isFinal = (index + blockLength - 1) >= length and 1 or 0
+		local low = blockLength % 256
+		local high = math.floor(blockLength / 256)
+		parts[#parts + 1] = string.char(isFinal, low, high, 255 - low, 255 - high)
+		parts[#parts + 1] = string.sub(raw, index, index + blockLength - 1)
+		index += blockLength
+	end
+	parts[#parts + 1] = packUInt(adler32(raw))
+	return table.concat(parts)
+end
+
+local function encodePng(width, height, rows)
+	local parts = { PNG_SIGNATURE }
+	parts[#parts + 1] = chunk(
+		"IHDR",
+		packUInt(width) .. packUInt(height) .. string.char(8, 6, 0, 0, 0)
+	)
+	parts[#parts + 1] = chunk("IDAT", deflateStored(table.concat(rows)))
+	parts[#parts + 1] = chunk("IEND", "")
+	return table.concat(parts)
+end
+
+local function renderInGame(assetId)
+	if type(AssetService.CreateEditableImageAsync) ~= "function" then
+		return nil, "AssetService.CreateEditableImageAsync tidak ada di executor ini"
 	end
 
-	local errorText
-	if kind == "url" then
-		embed.thumbnail = { url = value }
-		errorText = sendJson(url, { embeds = { embed } })
-	elseif kind == "bytes" then
-		local fileName = isJpeg(value) and "test_pet.jpg" or "test_pet.png"
-		local mimeType = isJpeg(value) and "image/jpeg" or "image/png"
-		embed.thumbnail = { url = "attachment://" .. fileName }
-		errorText = sendAttachment(url, { embeds = { embed } }, fileName, mimeType, value)
-	else
-		errorText = sendJson(url, { embeds = { embed } })
+	local created, image = pcall(function()
+		return AssetService:CreateEditableImageAsync("rbxassetid://" .. assetId)
+	end)
+	if not created or not image then
+		return nil, "CreateEditableImageAsync ditolak: " .. tostring(image)
 	end
 
-	local line
-	if errorText then
-		line = string.format("Test %s gambar siap tapi kirim gagal · %s", variant.Label, errorText)
-	else
-		line = string.format("Test %s terkirim bergambar · %s", variant.Label, tostring(detail))
+	local size = image.Size
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	log(string.format("editable image siap: %dx%d", width, height))
+
+	local readOk, pixels = pcall(function()
+		return image:ReadPixelsBuffer(Vector2.zero, size)
+	end)
+	if not readOk or type(pixels) ~= "buffer" then
+		pcall(function()
+			image:Destroy()
+		end)
+		return nil, "ReadPixelsBuffer gagal: " .. tostring(pixels)
 	end
-	log(line)
-	if statusLabel then
-		statusLabel.Text = line
+
+	local bufferSize = buffer.len(pixels)
+	local bytesPerPixel = bufferSize / (width * height)
+	log(string.format("buffer %d byte, %s byte per piksel", bufferSize, tostring(bytesPerPixel)))
+	if bytesPerPixel ~= 4 then
+		pcall(function()
+			image:Destroy()
+		end)
+		return nil, string.format("format piksel tidak dikenal (%s byte per piksel)", tostring(bytesPerPixel))
 	end
-	return errorText == nil, kind ~= nil
+
+	local rows = {}
+	for y = 0, height - 1 do
+		local base = y * width * 4
+		local packed = table.create(width * 4)
+		for offset = 0, width * 4 - 1 do
+			packed[offset + 1] = string.char(buffer.readu8(pixels, base + offset))
+		end
+		rows[y + 1] = string.char(0) .. table.concat(packed)
+	end
+
+	pcall(function()
+		image:Destroy()
+	end)
+	return encodePng(width, height, rows)
 end
 
 local gui = Instance.new("ScreenGui")
@@ -432,8 +346,8 @@ gui.DisplayOrder = 999
 gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(390, 214)
-frame.Position = UDim2.new(0.5, -195, 0.5, -107)
+frame.Size = UDim2.fromOffset(400, 250)
+frame.Position = UDim2.new(0.5, -200, 0.5, -125)
 frame.BackgroundColor3 = Color3.fromRGB(18, 18, 26)
 frame.BorderSizePixel = 0
 frame.Active = true
@@ -470,111 +384,181 @@ local function makeLabel(text, height, color)
 	label.TextColor3 = color or Color3.fromRGB(214, 218, 236)
 	label.TextXAlignment = Enum.TextXAlignment.Left
 	label.Text = text
+	label.TextWrapped = true
 	label.Parent = frame
 	return label
 end
 
-makeLabel("Onium Hub  ·  Thumbnail Tester", 18, Color3.fromRGB(255, 255, 255))
+local function makeBox(text, height)
+	local box = Instance.new("TextBox")
+	box.Size = UDim2.new(1, 0, 0, height)
+	box.BackgroundColor3 = Color3.fromRGB(8, 8, 12)
+	box.BorderSizePixel = 0
+	box.ClearTextOnFocus = false
+	box.Font = Enum.Font.Gotham
+	box.TextSize = 12
+	box.TextColor3 = Color3.fromRGB(255, 255, 255)
+	box.TextXAlignment = Enum.TextXAlignment.Left
+	box.Text = text
+	box.Parent = frame
 
+	local boxCorner = Instance.new("UICorner")
+	boxCorner.CornerRadius = UDim.new(0, 5)
+	boxCorner.Parent = box
+
+	local boxPad = Instance.new("UIPadding")
+	boxPad.PaddingLeft = UDim.new(0, 8)
+	boxPad.PaddingRight = UDim.new(0, 8)
+	boxPad.Parent = box
+	return box
+end
+
+local function makeButton(text)
+	local button = Instance.new("TextButton")
+	button.Size = UDim2.new(1, 0, 0, 28)
+	button.BackgroundColor3 = Color3.fromRGB(217, 70, 239)
+	button.BorderSizePixel = 0
+	button.Font = Enum.Font.GothamBold
+	button.TextSize = 13
+	button.TextColor3 = Color3.fromRGB(255, 255, 255)
+	button.Text = text
+	button.Parent = frame
+
+	local buttonCorner = Instance.new("UICorner")
+	buttonCorner.CornerRadius = UDim.new(0, 6)
+	buttonCorner.Parent = button
+	return button
+end
+
+makeLabel("Onium Hub  ·  Thumbnail Tester (jalur Chili)", 18, Color3.fromRGB(255, 255, 255))
 makeLabel("Webhook URL", 14)
 
-local urlBox = Instance.new("TextBox")
-urlBox.Size = UDim2.new(1, 0, 0, 26)
-urlBox.BackgroundColor3 = Color3.fromRGB(8, 8, 12)
-urlBox.BorderSizePixel = 0
-urlBox.ClearTextOnFocus = false
-urlBox.Font = Enum.Font.Gotham
-urlBox.TextSize = 12
-urlBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+local urlBox = makeBox(savedUrl(), 24)
 urlBox.PlaceholderText = "https://discord.com/api/webhooks/..."
-urlBox.TextXAlignment = Enum.TextXAlignment.Left
-urlBox.Text = savedUrl()
-urlBox.Parent = frame
 
-local urlCorner = Instance.new("UICorner")
-urlCorner.CornerRadius = UDim.new(0, 5)
-urlCorner.Parent = urlBox
+makeLabel("Asset ID (pet)", 14)
 
-local urlPad = Instance.new("UIPadding")
-urlPad.PaddingLeft = UDim.new(0, 8)
-urlPad.PaddingRight = UDim.new(0, 8)
-urlPad.Parent = urlBox
-
-makeLabel("Asset ID", 14)
-
-local assetBox = Instance.new("TextBox")
-assetBox.Size = UDim2.new(1, 0, 0, 26)
-assetBox.BackgroundColor3 = Color3.fromRGB(8, 8, 12)
-assetBox.BorderSizePixel = 0
-assetBox.ClearTextOnFocus = false
-assetBox.Font = Enum.Font.Gotham
-assetBox.TextSize = 12
-assetBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+local assetBox = makeBox(DEFAULT_ASSET_ID, 24)
 assetBox.PlaceholderText = DEFAULT_ASSET_ID
-assetBox.TextXAlignment = Enum.TextXAlignment.Left
-assetBox.Text = DEFAULT_ASSET_ID
-assetBox.Parent = frame
 
-local assetCorner = Instance.new("UICorner")
-assetCorner.CornerRadius = UDim.new(0, 5)
-assetCorner.Parent = assetBox
-
-local assetPad = Instance.new("UIPadding")
-assetPad.PaddingLeft = UDim.new(0, 8)
-assetPad.PaddingRight = UDim.new(0, 8)
-assetPad.Parent = assetBox
-
-local button = Instance.new("TextButton")
-button.Size = UDim2.new(1, 0, 0, 30)
-button.BackgroundColor3 = Color3.fromRGB(217, 70, 239)
-button.BorderSizePixel = 0
-button.Font = Enum.Font.GothamBold
-button.TextSize = 13
-button.TextColor3 = Color3.fromRGB(255, 255, 255)
-button.Text = "Send Test A-G"
-button.Parent = frame
-
-local buttonCorner = Instance.new("UICorner")
-buttonCorner.CornerRadius = UDim.new(0, 6)
-buttonCorner.Parent = button
-
-local status = makeLabel("Paste URL lalu tekan Send Test", 16, Color3.fromRGB(255, 194, 77))
-status.TextWrapped = true
+local chiliButton = makeButton("Send Chili Path")
+local renderButton = makeButton("Send Render In-Game")
+local statusLabel = makeLabel("Pilih salah satu tombol", 44, Color3.fromRGB(255, 194, 77))
 
 local running = false
 
-button.MouseButton1Click:Connect(function()
+local function currentInputs()
+	local url = tostring(urlBox.Text or ""):gsub("%s", "")
+	local assetId = tostring(assetBox.Text or ""):match("%d+")
+	if url == "" then
+		statusLabel.Text = "URL webhook masih kosong"
+		return nil
+	end
+	if not assetId then
+		statusLabel.Text = "Asset ID masih kosong"
+		return nil
+	end
+	return url, assetId
+end
+
+local function sendReport(url, assetId, title, ok, detail, thumbnailUrl, pngBytes)
+	local fields = {
+		{ name = "Asset", value = string.format("`%s`", assetId), inline = true },
+		{ name = "Hasil", value = ok and "`BERHASIL`" or "`GAGAL`", inline = true },
+	}
+	local embed = {
+		author = { name = string.format("%s  ·  Onium Hub", LocalPlayer.DisplayName or LocalPlayer.Name or "Player") },
+		title = title,
+		color = ok and 3066993 or 15158332,
+		description = string.format("`%s`", tostring(detail)),
+		fields = fields,
+		footer = { text = "Onium Hub Thumbnail Tester" },
+		timestamp = DateTime.now():ToIsoDate(),
+	}
+
+	if ok and pngBytes then
+		embed.thumbnail = { url = "attachment://render.png" }
+		return postAttachment(url, { embeds = { embed } }, "render.png", pngBytes)
+	end
+	if ok and thumbnailUrl then
+		embed.thumbnail = { url = thumbnailUrl }
+	end
+	return postJson(url, { embeds = { embed } })
+end
+
+chiliButton.MouseButton1Click:Connect(function()
 	if running then
 		return
 	end
-	local url = tostring(urlBox.Text or ""):gsub("%s", "")
-	local assetId = tostring(assetBox.Text or ""):match("%d+") or DEFAULT_ASSET_ID
-	if url == "" then
-		status.Text = "URL webhook masih kosong"
-		return
-	end
-	if not requestFn then
-		status.Text = "executor tidak punya request"
+	local url, assetId = currentInputs()
+	if not url then
 		return
 	end
 	running = true
-	button.Text = "Sending..."
+	chiliButton.Text = "Sending..."
 
 	task.spawn(function()
-		log(string.format("mulai · asset=%s", assetId))
-		local successCount = 0
-		for index, variant in ipairs(VARIANTS) do
-			local sent, hasImage = sendVariant(url, assetId, variant, index, status)
-			if sent and hasImage then
-				successCount += 1
-			end
-			task.wait(1.2)
+		local imageUrl, reason = chiliThumbnail(assetId)
+		local sendError = sendReport(
+			url,
+			assetId,
+			"Chili Path  ·  thumbnails.roblox.com",
+			imageUrl ~= nil,
+			imageUrl and ("url: " .. imageUrl) or tostring(reason),
+			imageUrl
+		)
+		local line
+		if imageUrl then
+			line = "Chili path: gambar ditemukan"
+		else
+			line = "Chili path GAGAL · " .. tostring(reason)
 		end
-		status.Text = string.format("Selesai · %d/%d embed berisi gambar", successCount, #VARIANTS)
-		log(string.format("selesai · %d/%d embed berisi gambar", successCount, #VARIANTS))
-		button.Text = "Send Test A-G"
+		if sendError then
+			line = line .. " · kirim: " .. tostring(sendError)
+		end
+		log(line)
+		statusLabel.Text = line
+		chiliButton.Text = "Send Chili Path"
 		running = false
 	end)
 end)
 
-log("ui siap · isi URL lalu tekan Send Test A-F")
+renderButton.MouseButton1Click:Connect(function()
+	if running then
+		return
+	end
+	local url, assetId = currentInputs()
+	if not url then
+		return
+	end
+	running = true
+	renderButton.Text = "Rendering..."
+
+	task.spawn(function()
+		local pngBytes, reason = renderInGame(assetId)
+		local sendError = sendReport(
+			url,
+			assetId,
+			"Render In-Game  ·  EditableImage",
+			pngBytes ~= nil,
+			pngBytes and string.format("png %d byte", #pngBytes) or tostring(reason),
+			nil,
+			pngBytes
+		)
+		local line
+		if pngBytes then
+			line = string.format("Render: png %d byte terkirim", #pngBytes)
+		else
+			line = "Render GAGAL · " .. tostring(reason)
+		end
+		if sendError then
+			line = line .. " · kirim: " .. tostring(sendError)
+		end
+		log(line)
+		statusLabel.Text = line
+		renderButton.Text = "Send Render In-Game"
+		running = false
+	end)
+end)
+
+log("ui siap · tombol Send Chili Path dan Send Render In-Game")
