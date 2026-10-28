@@ -767,7 +767,7 @@ local function CreateCard(parent, entry, metrics, index, theme)
 
 	New("Frame", {
 		BackgroundColor3 = COLORS.Text,
-		BackgroundTransparency = 0.97,
+		BackgroundTransparency = 0.12,
 		BorderSizePixel = 0,
 		Position = UDim2.fromOffset(3, 6),
 		Size = UDim2.new(0, 3, 1, -12),
