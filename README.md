@@ -101,7 +101,7 @@ Untuk debug di executor, state yang sama juga tersedia di `getgenv().N3Hub_State
 | --- | --- |
 | Farm | Kiri: Farm Eggs — Kanan: Progression |
 | Pets | Kiri: Auto Place Egg, Auto Mutation, Auto Fuse — Kanan: Auto Hatch & Equip, Auto Sell, Favorite |
-| Event | Kiri: Pumpkin Boss, Ghost Dog & Fishing, The Hollow, Cursed Island — Kanan: Phantom Express, Halloween Monsters |
+| Event | Kiri: Pumpkin Boss, Ghost Dog & Fishing, The Hollow, Cursed Island Wars — Kanan: Phantom Express, Halloween Monsters |
 | Admin | Kiri: Capture The Egg, Instant Steal Abuse — Kanan: Admin Treadmill, Minigame Eggs |
 | Quest | Kiri: Auto Butterfly — Kanan: Shooting Star |
 | Player | Kiri: ESP — Kanan: Movement, Character |
@@ -126,9 +126,9 @@ Catatan implementasi:
 - `Take It From The Holder` hanya mengikuti holder: game tidak menyediakan remote untuk merebut egg dari tangan, jadi pengambilan tetap menunggu egg lepas.
 - Titik drop base dipakai bersama oleh auto steal dan instant steal lewat `DELIVERY_DROP_CFRAME` di bagian 2.
 
-### Group Cursed Island (tab Event)
+### Group Cursed Island Wars (tab Event)
 
-Group `Cursed Island` ada di kolom kiri tab `Event` dan hanya berisi dua kontrol, tanpa status label:
+Group `Cursed Island Wars` ada di kolom kiri tab `Event` dan hanya berisi dua kontrol, tanpa status label:
 
 | Kontrol | Perilaku |
 | --- | --- |
