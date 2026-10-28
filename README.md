@@ -58,7 +58,7 @@ Nomor baris di atas mengacu ke commit `b174da4` dan akan bergeser setiap kali fi
 | 5O | 9633 | Shooting star |
 | 5P | 9874 | Player movement & character modifiers |
 | 5R | 10351 | Admin abuse: Capture The Egg, Admin Treadmill, Instant Steal, Minigame Eggs |
-| 5S | 10871 | Cursed Island Wars: bat swing, pumpkin launcher, regroup saat sudden death |
+| 5S | 10870 | Cursed Island Wars: bat swing, pumpkin launcher, regroup saat sudden death |
 | 5Q | 10863 – 12484 | ESP suite (egg, guard, player, slot badge) |
 
 Catatan struktur: pembatas scope di sini memakai `do ... end`. 5D membungkus 5E–5P dalam satu blok, 5L–5P punya blok bersarang sendiri, dan 5Q membungkus seluruh ESP. Variabel yang perlu dipakai lintas blok diekspos lewat `Hub.*`, bukan lewat variabel lokal.

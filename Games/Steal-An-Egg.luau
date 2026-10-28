@@ -10866,7 +10866,6 @@ do
 			Progression.Wake()
 		end
 	end
-end
 
 	-- 5S. Cursed Island Wars (Chilli Mechanics L36026-36230: bat swings, pumpkin launcher shots & sudden death regroup)
 	do
@@ -11258,6 +11257,7 @@ end
 			Progression.Wake()
 		end
 	end
+end
 
 -- 5Q. Chilli Gradient ESP Suite (Ultra-Light Event-Driven + 1.5ms Frame-Sliced, Zero FPS Drop)
 do
