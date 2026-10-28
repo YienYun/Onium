@@ -13944,6 +13944,7 @@ if FpsManager then
 end
 if ServerManager then
 	ServerManager:SetLibrary(LibraryLoader)
+	ServerManager:SetAutoLoadSource(RepoFile("Games/Steal-An-Egg.luau"))
 	ServerManager:ApplyToTab(SettingsTab)
 	Hub.ServerManager = ServerManager
 end

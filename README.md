@@ -101,7 +101,7 @@ Untuk debug di executor, state yang sama juga tersedia di `getgenv().N3Hub_State
 | Event | Kiri: Pumpkin Boss, Ghost Dog & Fishing, The Hollow — Kanan: Phantom Express, Halloween Monsters |
 | Quest | Kiri: Auto Butterfly — Kanan: Shooting Star |
 | Player | Kiri: ESP — Kanan: Movement, Character |
-| Settings | Kiri: Performance (FpsManager), Server (ServerManager), Themes (ThemeManager) — Kanan: Configuration (SaveManager). Tidak ada groupbox manual di hub. |
+| Settings | Kiri: Performance (FpsManager), Themes (ThemeManager) — Kanan: Server (ServerManager), Configuration (SaveManager). Tidak ada groupbox manual di hub. |
 
 Setiap groupbox dibangun lewat satu fungsi `Hub.Features.Build*(group)`. Nama tombol mengikuti pola `Build + Nama Groupbox`, jadi wiring di bagian 6 tinggal satu baris per fitur.
 
@@ -172,7 +172,7 @@ Empat manager dimuat terpisah dari hub dan punya pola API sama: `SetLibrary(libr
 | FpsManager | `ApplyToTab(tab)` | FPS cap, optimizer, FPS & ping, disable 3D render, anti AFK |
 | SaveManager | `BuildConfigSection(tab)` | Simpan/muat config per game |
 | ThemeManager | `ApplyToTab(tab)` | Pilihan theme library |
-| ServerManager | `ApplyToTab(tab)` | Server hop, job ID, rejoin |
+| ServerManager | `ApplyToTab(tab)` | Server hop, job ID, rejoin, auto load script (kanan) |
 
 ### ServerManager
 
@@ -180,17 +180,19 @@ Satu groupbox `Server` di tab Settings, urutan kontrol:
 
 | # | Kontrol | Tipe | Logika |
 | --- | --- | --- | --- |
-| 1 | Server Hop Mode | Dropdown | urutan pilih server: most / random / least players |
-| 2 | Server Hop | Button | ambil daftar server, pilih, teleport, ulangi kalau penuh |
-| 3 | Job ID | Input | target Job ID, fallback ke clipboard |
-| 4 | Join Job ID | Button | `TeleportToPlaceInstance` ke Job ID tersebut |
-| 5 | Copy Current Job ID | Button | `game.JobId` ke input + clipboard |
-| 6 | Rejoin Server | Button | teleport balik ke server yang sekarang |
-| 7 | Auto Rejoin When Disconnect | Toggle | `RobloxPromptGui.promptOverlay` + `ErrorMessage` |
+| 1 | Auto Load Script | Toggle | queue hub di `queue_on_teleport`, default OFF, klik ON memunculkan dialog Accept/Cancel |
+| 2 | Server Hop Mode | Dropdown | urutan pilih server: most / random / least players |
+| 3 | Server Hop | Button | ambil daftar server, pilih, teleport, ulangi kalau penuh |
+| 4 | Job ID | Input | target Job ID, fallback ke clipboard |
+| 5 | Join Job ID | Button | `TeleportToPlaceInstance` ke Job ID tersebut |
+| 6 | Copy Current Job ID | Button | `game.JobId` ke input + clipboard |
+| 7 | Rejoin Server | Button | teleport balik ke server yang sekarang |
+| 8 | Auto Rejoin When Disconnect | Toggle | `RobloxPromptGui.promptOverlay` + `ErrorMessage` |
 
 Perilaku yang perlu diingat:
 
-- **Tidak ada auto execute.** Hub tidak mengantre script lewat `queue_on_teleport` dan tidak menyentuh `TeleportService:SetTeleportSetting`, jadi teleport murni hanya memindahkan server.
+- **Auto execute default OFF.** Toggle `Auto Load Script` memakai dua kunci: `TeleportService:SetTeleportSetting` dan script antre via `queue_on_teleport`. Script antre membaca URL hub dari `ServerManager:SetAutoLoadSource(...)` (diisi hub lewat `RepoFile`), jadi hub menjalankan dirinya sendiri di server tujuan.
+- **Konfirmasi sebelum aktif.** Karena toggle dibuat tanpa `Callback` dan dikaitkan ke klik tombolnya, dialog Accept/Cancel hanya muncul dari klik user — config yang di-restore tidak pernah memunculkan dialog. Kalau executor tidak punya queue on teleport, toggle otomatis balik OFF dan muncul notifikasi.
 - **Signal terbatas aman.** `GuiService.ErrorMessageChanged` punya capability `RobloxScript` dan ditolak di banyak executor. Semua connect di manager lewat helper `TryConnect`, jadi signal yang diblokir dilewati tanpa mematikan groupbox.
 - **Hop menyaring server penuh** (`playing < maxPlayers`) lewat endpoint publik `games.roblox.com`, menyimpan server yang gagal di `AvoidServers` agar tidak dipilih lagi, dan menyimpan cache daftar selama 60 detik.
 - **Auto rejoin mengabaikan** disconnect akibat teleport sendiri (60 detik), pesan `banned`, `same account`, `duplicate player`, dan pesan yang mengandung kata `teleport`.
