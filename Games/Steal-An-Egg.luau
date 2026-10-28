@@ -428,6 +428,8 @@ local FarmConfig = {
 	Admin_AutoTreadmill = false,
 	Admin_InstantSteal = false,
 	Admin_MinigameEggs = false,
+	IslandWars_Auto = false,
+	IslandWars_Target = "Enemies And Base",
 }
 
 local RuntimeState = {
@@ -10866,6 +10868,397 @@ do
 	end
 end
 
+	-- 5S. Cursed Island Wars (Chilli Mechanics L36026-36230: bat swings, pumpkin launcher shots & sudden death regroup)
+	do
+		local IslandWars = {
+			Snapshot = nil,
+			SnapshotAt = 0,
+			NextFetchAt = 0,
+			Shot = 0,
+			SuddenDeath = false,
+			CollapseParts = nil,
+			CollapseAt = 0,
+			Cooldowns = {},
+			KnockBackup = nil,
+			Remotes = {},
+			ConnectedPaths = {},
+		}
+		Hub.IslandWars = IslandWars
+
+		local BAT_TOOL_NAME = "Bat"
+		local LAUNCHER_TOOL_NAME = "PumpkinLauncher"
+		local BAT_REACH = 10
+		local ENEMY_SCAN_RADIUS = 25
+		local BAT_COOLDOWN_SEC = 0.75
+		local LAUNCHER_COOLDOWN_SEC = 1.25
+		local LAUNCHER_PROJECTILE_SPEED = 110
+		local SNAPSHOT_MAX_AGE_SEC = 30
+		local SNAPSHOT_REFRESH_SEC = 5
+		local REGROUP_DISTANCE = 18
+		local REGROUP_MIN_SPEED = 30
+		local COLLAPSE_RAY_LENGTH = 14
+		local COLLAPSE_WARN_SEC = 8
+		local MOVEMENT_OWNER = "islandwars"
+		local ACTIVE_PHASES = { Prep = true, Match = true, SuddenDeath = true }
+
+		local function IslandRemote(remoteName)
+			local cached = IslandWars.Remotes[remoteName]
+			if cached and cached.Parent then
+				return cached
+			end
+			local remoteObj = FindGameRemote(remoteName)
+			IslandWars.Remotes[remoteName] = remoteObj
+			return remoteObj
+		end
+
+		local function FlatVector(vectorValue)
+			return Vector3.new(vectorValue.X, 0, vectorValue.Z)
+		end
+
+		local function ReadPosition(instanceRef)
+			if typeof(instanceRef) ~= "Instance" then
+				return nil
+			end
+			if instanceRef:IsA("BasePart") then
+				return instanceRef.Position
+			end
+			if instanceRef:IsA("Attachment") then
+				return instanceRef.WorldPosition
+			end
+			if instanceRef:IsA("Model") then
+				local callOk, pivotCFrame = pcall(instanceRef.GetPivot, instanceRef)
+				return (callOk and typeof(pivotCFrame) == "CFrame") and pivotCFrame.Position or nil
+			end
+			return instanceRef.Parent and ReadPosition(instanceRef.Parent) or nil
+		end
+
+		local function ToggleKnockSuppression(suppress)
+			if suppress then
+				if IslandWars.KnockBackup then
+					return
+				end
+			elseif not IslandWars.KnockBackup then
+				return
+			end
+			local callOk, inputModule = pcall(
+				RequireGameModule,
+				"Controllers",
+				"Game",
+				"AdminAbuseClientController",
+				"Events",
+				"CursedIslandWars",
+				"Input"
+			)
+			if not callOk or type(inputModule) ~= "table" or type(inputModule.Knock) ~= "function" then
+				return
+			end
+			if suppress then
+				IslandWars.KnockBackup = inputModule.Knock
+				inputModule.Knock = function() end
+			elseif IslandWars.KnockBackup then
+				inputModule.Knock = IslandWars.KnockBackup
+				IslandWars.KnockBackup = nil
+			end
+		end
+
+		function IslandWars.RestoreKnock()
+			ToggleKnockSuppression(false)
+		end
+
+		local function SetSnapshot(snapshot)
+			if type(snapshot) ~= "table" then
+				return
+			end
+			IslandWars.Snapshot = snapshot
+			IslandWars.SnapshotAt = os.clock()
+			Progression.Wake()
+		end
+
+		local function RefreshSnapshot()
+			local fetchRemote = IslandRemote("RF/IslandWars/Fetch")
+			if not fetchRemote or not fetchRemote:IsA("RemoteFunction") then
+				return
+			end
+			local callOk, snapshot = pcall(fetchRemote.InvokeServer, fetchRemote)
+			if callOk then
+				SetSnapshot(snapshot)
+			end
+		end
+
+		local function ReadMyEntry(snapshot)
+			for _, entry in ipairs(type(snapshot.Entries) == "table" and snapshot.Entries or {}) do
+				if type(entry) == "table" and entry.UserId == LocalPlayer.UserId then
+					return entry
+				end
+			end
+			return nil
+		end
+
+		local function FindNearestEnemyRoot(snapshot, enemyTeam, originPart, maxDistance)
+			local bestRoot, bestDistance = nil, maxDistance
+			for _, entry in ipairs(type(snapshot.Entries) == "table" and snapshot.Entries or {}) do
+				local enemyModel = type(entry) == "table"
+					and entry.Team == enemyTeam
+					and entry.State == "Alive"
+					and entry.Model
+				local enemyRoot = typeof(enemyModel) == "Instance" and enemyModel:FindFirstChild("HumanoidRootPart")
+				if enemyRoot then
+					local distance = (enemyRoot.Position - originPart.Position).Magnitude
+					if distance < bestDistance then
+						bestRoot, bestDistance = enemyRoot, distance
+					end
+				end
+			end
+			return bestRoot, bestDistance
+		end
+
+		local function FindStructureAimPoint(snapshot, enemyTeam, placeName, aimChildName)
+			local placeGroup = snapshot[placeName]
+			local structure = type(placeGroup) == "table" and placeGroup[enemyTeam] or nil
+			if type(structure) ~= "table" or (tonumber(structure.Health) or 0) <= 0 then
+				return nil
+			end
+			if typeof(structure.Model) ~= "Instance" then
+				return nil
+			end
+			return ReadPosition(structure.Model:FindFirstChild(aimChildName, true) or structure.Model)
+		end
+
+		local function ReadIslandCentre(snapshot)
+			if typeof(snapshot.Island) ~= "Instance" then
+				return nil
+			end
+			local centreModel = snapshot.Island:FindFirstChild("Centre")
+			return ReadPosition(centreModel and centreModel:FindFirstChild("Top")) or ReadPosition(centreModel)
+		end
+
+		local function IsFloorCollapsing(rootPart)
+			if type(IslandWars.CollapseParts) ~= "table" or (os.clock() - IslandWars.CollapseAt) >= COLLAPSE_WARN_SEC then
+				return false
+			end
+			local rayParams = RaycastParams.new()
+			rayParams.FilterType = Enum.RaycastFilterType.Include
+			rayParams.FilterDescendantsInstances = IslandWars.CollapseParts
+			return Workspace:Raycast(rootPart.Position, Vector3.new(0, -COLLAPSE_RAY_LENGTH, 0), rayParams) ~= nil
+		end
+
+		local function FindIslandTool(toolName)
+			local containers = { LocalPlayer.Character, LocalPlayer:FindFirstChildOfClass("Backpack") }
+			for _, container in ipairs(containers) do
+				local tool = container and container:FindFirstChild(toolName)
+				if tool and tool:IsA("Tool") then
+					return tool
+				end
+			end
+			return nil
+		end
+
+		local function EquipIslandTool(tool)
+			local character = LocalPlayer.Character
+			local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+			if humanoid and tool.Parent ~= character then
+				pcall(humanoid.EquipTool, humanoid, tool)
+			end
+		end
+
+		local function FacePosition(rootPart, targetPosition)
+			local flatDirection = FlatVector(targetPosition - rootPart.Position)
+			if flatDirection.Magnitude <= 0.1 then
+				return
+			end
+			pcall(function()
+				rootPart.CFrame = CFrame.lookAt(rootPart.Position, rootPart.Position + flatDirection.Unit)
+			end)
+		end
+
+		local function SwingEnemy(rootPart, enemyRoot)
+			local useRemote = IslandRemote("RE/IslandWars/Use")
+			local batTool = FindIslandTool(BAT_TOOL_NAME)
+			if not useRemote or not useRemote:IsA("RemoteEvent") or not batTool then
+				return false
+			end
+			EquipIslandTool(batTool)
+			FacePosition(rootPart, enemyRoot.Position)
+			IslandWars.Cooldowns.Bat = math.max(
+				IslandWars.Cooldowns.Bat or 0,
+				Workspace:GetServerTimeNow() + BAT_COOLDOWN_SEC
+			)
+			useRemote:FireServer("Swing", enemyRoot)
+			return true
+		end
+
+		local function ShootTarget(rootPart, aimPosition)
+			local useRemote = IslandRemote("RE/IslandWars/Use")
+			local launcherTool = FindIslandTool(LAUNCHER_TOOL_NAME)
+			if not useRemote or not useRemote:IsA("RemoteEvent") or not launcherTool then
+				return false
+			end
+			local handlePart = launcherTool:FindFirstChild("Handle")
+			local muzzleAttachment = handlePart and handlePart:FindFirstChild("Muzzle")
+			local muzzlePosition = (
+				muzzleAttachment
+				and muzzleAttachment:IsA("Attachment")
+				and muzzleAttachment.WorldPosition
+			) or (rootPart.Position + Vector3.new(0, 1.5, 0))
+			local aimDirection = aimPosition - muzzlePosition
+			if aimDirection.Magnitude <= 1 then
+				return false
+			end
+			EquipIslandTool(launcherTool)
+			FacePosition(rootPart, aimPosition)
+			IslandWars.Shot = IslandWars.Shot + 1
+			IslandWars.Cooldowns.PumpkinLauncher = math.max(
+				IslandWars.Cooldowns.PumpkinLauncher or 0,
+				Workspace:GetServerTimeNow() + LAUNCHER_COOLDOWN_SEC
+			)
+			useRemote:FireServer("Launch", IslandWars.Shot, muzzlePosition, aimDirection.Unit)
+			return true
+		end
+
+		local function RunIslandAction(snapshot, myEntry)
+			local rootPart = Engine.Root()
+			if not rootPart then
+				return false
+			end
+			local centrePosition = ReadIslandCentre(snapshot)
+			if centrePosition and (IslandWars.SuddenDeath or snapshot.Phase == "SuddenDeath" or IsFloorCollapsing(rootPart)) then
+				local flatToCentre = FlatVector(centrePosition - rootPart.Position)
+				if flatToCentre.Magnitude > REGROUP_DISTANCE then
+					local character = LocalPlayer.Character
+					local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+					local runSpeed = math.max(humanoid and humanoid.WalkSpeed or 16, REGROUP_MIN_SPEED)
+					rootPart.AssemblyLinearVelocity = flatToCentre.Unit * runSpeed
+						+ Vector3.new(0, rootPart.AssemblyLinearVelocity.Y, 0)
+					return true
+				end
+			end
+			if snapshot.Phase == "Prep" then
+				return false
+			end
+			local enemyTeam = myEntry.Team == "Red" and "Blue" or "Red"
+			local scanRadius = FarmConfig.IslandWars_Target == "Walls And Crystal" and 0 or ENEMY_SCAN_RADIUS
+			local enemyRoot, enemyDistance = FindNearestEnemyRoot(snapshot, enemyTeam, rootPart, scanRadius)
+			local serverNow = Workspace:GetServerTimeNow()
+			if enemyRoot
+				and enemyDistance <= BAT_REACH
+				and (IslandWars.Cooldowns.Bat or 0) <= serverNow
+				and FindIslandTool(BAT_TOOL_NAME)
+			then
+				return SwingEnemy(rootPart, enemyRoot)
+			end
+			if (IslandWars.Cooldowns.PumpkinLauncher or 0) > serverNow then
+				return true
+			end
+			local aimPosition = enemyRoot
+					and (enemyRoot.Position + enemyRoot.AssemblyLinearVelocity * (enemyDistance / LAUNCHER_PROJECTILE_SPEED))
+				or FindStructureAimPoint(snapshot, enemyTeam, "Barriers", "Hitbox")
+				or FindStructureAimPoint(snapshot, enemyTeam, "Crystals", "Pivot")
+			if not aimPosition then
+				return false
+			end
+			return ShootTarget(rootPart, aimPosition)
+		end
+
+		local function ConnectIslandRemote(remotePath, callbackFn)
+			if IslandWars.ConnectedPaths[remotePath] then
+				return true
+			end
+			local remoteObj = IslandRemote(remotePath)
+			if not remoteObj or not remoteObj:IsA("RemoteEvent") then
+				return false
+			end
+			Hub.Lifecycle.TrackConnection(remoteObj.OnClientEvent:Connect(callbackFn))
+			IslandWars.ConnectedPaths[remotePath] = true
+			return true
+		end
+
+		local function ConnectIslandListeners()
+			ConnectIslandRemote("RE/IslandWars/State", SetSnapshot)
+			ConnectIslandRemote("RE/IslandWars/Moment", function(momentName, momentValue, momentNumber)
+				if momentName == "Cooldown" and type(momentValue) == "string" then
+					IslandWars.Cooldowns[momentValue] = tonumber(momentNumber) or 0
+				elseif momentName == "SuddenDeath" or momentName == "EarlySuddenDeath" then
+					IslandWars.SuddenDeath = true
+				elseif momentName == "Warning" and (tonumber(momentValue) or math.huge) <= 15 then
+					IslandWars.SuddenDeath = true
+				elseif momentName == "CollapseWarn" and type(momentValue) == "table" then
+					IslandWars.CollapseParts = momentValue
+					IslandWars.CollapseAt = os.clock()
+				elseif momentName == "Win" or momentName == "Outro" then
+					IslandWars.SuddenDeath = false
+				end
+			end)
+			ConnectIslandRemote("RE/LiveEvents/Began", function(eventName)
+				if eventName ~= "CursedIslandWars" then
+					return
+				end
+				IslandWars.Shot = 0
+				IslandWars.SuddenDeath = false
+				IslandWars.CollapseParts = nil
+				task.spawn(RefreshSnapshot)
+				Progression.Wake()
+			end)
+			ConnectIslandRemote("RE/LiveEvents/Ended", function(eventName)
+				if eventName ~= "CursedIslandWars" then
+					return
+				end
+				IslandWars.Snapshot = nil
+				IslandWars.SuddenDeath = false
+				IslandWars.CollapseParts = nil
+				IslandWars.RestoreKnock()
+			end)
+		end
+		ConnectIslandListeners()
+
+		task.spawn(function()
+			local runningRemote = IslandRemote("RF/LiveEvents/FetchRunning")
+			if not runningRemote or not runningRemote:IsA("RemoteFunction") then
+				return
+			end
+			local callOk, runningList = pcall(runningRemote.InvokeServer, runningRemote)
+			if callOk and type(runningList) == "table" and runningList.CursedIslandWars then
+				RefreshSnapshot()
+			end
+		end)
+
+		AddWorker(function()
+			if not FarmConfig.IslandWars_Auto then
+				IslandWars.RestoreKnock()
+				return false
+			end
+			ConnectIslandListeners()
+			if os.clock() >= IslandWars.NextFetchAt then
+				IslandWars.NextFetchAt = os.clock() + SNAPSHOT_REFRESH_SEC
+				RefreshSnapshot()
+			end
+			local snapshot = IslandWars.Snapshot
+			if type(snapshot) ~= "table" or (os.clock() - IslandWars.SnapshotAt) >= SNAPSHOT_MAX_AGE_SEC then
+				IslandWars.Snapshot = nil
+				return false
+			end
+			local myEntry = ReadMyEntry(snapshot)
+			if not myEntry or not ACTIVE_PHASES[snapshot.Phase] then
+				return false
+			end
+			local character = LocalPlayer.Character
+			local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+			if not humanoid or humanoid.Health <= 0 or myEntry.State ~= "Alive" then
+				return false
+			end
+			if not Engine.ClaimMovement(MOVEMENT_OWNER) then
+				return false
+			end
+			ToggleKnockSuppression(true)
+			local callOk, acted = pcall(RunIslandAction, snapshot, myEntry)
+			Engine.ReleaseMovement(MOVEMENT_OWNER)
+			return callOk and acted == true
+		end)
+
+		function IslandWars.Wake()
+			Progression.Wake()
+		end
+	end
+
 -- 5Q. Chilli Gradient ESP Suite (Ultra-Light Event-Driven + 1.5ms Frame-Sliced, Zero FPS Drop)
 do
 	local CoreGuiService = game:GetService("CoreGui")
@@ -13783,6 +14176,30 @@ function Hub.Features.BuildTheHollow(hollowGroup)
 	})
 end
 
+function Hub.Features.BuildCursedIsland(islandGroup)
+	islandGroup:AddDropdown("Dropdown_IslandWars_Target", {
+		Text = "Island Wars Target",
+		Values = { "Enemies And Base", "Walls And Crystal" },
+		Default = "Enemies And Base",
+		Tooltip = "Hits enemy players first, or goes straight for the walls and crystal",
+		Callback = function(selectedTarget)
+			if type(selectedTarget) == "string" and selectedTarget ~= "" then
+				FarmConfig.IslandWars_Target = selectedTarget
+			end
+		end,
+	})
+
+	islandGroup:AddToggle("Toggle_IslandWars_Auto", {
+		Text = "Auto Play Curset Island Wars",
+		Default = false,
+		Tooltip = "Swings the Bat at nearby enemies and fires the Pumpkin Launcher at enemies, walls and crystals",
+		Callback = function(isEnabled)
+			FarmConfig.IslandWars_Auto = isEnabled
+			Hub.IslandWars.Wake()
+		end,
+	})
+end
+
 local PhantomGhostTargets = { "Rarest First", "Closest" }
 local ButterflyCatchMethods = { "Stand", "Chase", "Circle", "Patrol" }
 local ButterflyCatchPriorities = { "Rarest", "Nearest" }
@@ -14483,6 +14900,7 @@ local GhostDogFishingGroup = EventTab:AddLeftGroupbox("Ghost Dog & Fishing", Hub
 local PhantomExpressGroup = EventTab:AddRightGroupbox("Phantom Express", Hub.Icons.PhantomExpress)
 local HalloweenMonsterGroup = EventTab:AddRightGroupbox("Halloween Monsters", Hub.Icons.HalloweenMonster)
 local TheHollowGroup = EventTab:AddLeftGroupbox("The Hollow", Hub.Icons.TheHollow)
+local CursedIslandGroup = EventTab:AddLeftGroupbox("Cursed Island", Hub.Icons.Fights)
 local CaptureTheEggGroup = AdminTab:AddLeftGroupbox("Capture The Egg", Hub.Icons.CaptureTheEgg)
 local AdminTreadmillGroup = AdminTab:AddRightGroupbox("Admin Treadmill", Hub.Icons.Treadmill)
 local InstantStealGroup = AdminTab:AddLeftGroupbox("Instant Steal Abuse", Hub.Icons.InstantSteal)
@@ -14506,6 +14924,7 @@ Hub.UI.Groups.GhostDogFishing = GhostDogFishingGroup
 Hub.UI.Groups.PhantomExpress = PhantomExpressGroup
 Hub.UI.Groups.HalloweenMonsters = HalloweenMonsterGroup
 Hub.UI.Groups.TheHollow = TheHollowGroup
+Hub.UI.Groups.CursedIsland = CursedIslandGroup
 Hub.UI.Groups.CaptureTheEgg = CaptureTheEggGroup
 Hub.UI.Groups.AdminTreadmill = AdminTreadmillGroup
 Hub.UI.Groups.InstantSteal = InstantStealGroup
@@ -14526,6 +14945,7 @@ Hub.Features.BuildGhostDogFishing(GhostDogFishingGroup)
 Hub.Features.BuildPhantomExpress(PhantomExpressGroup)
 Hub.Features.BuildHalloweenMonsters(HalloweenMonsterGroup)
 Hub.Features.BuildTheHollow(TheHollowGroup)
+Hub.Features.BuildCursedIsland(CursedIslandGroup)
 Hub.Features.BuildCaptureTheEgg(CaptureTheEggGroup)
 Hub.Features.BuildAdminTreadmill(AdminTreadmillGroup)
 Hub.Features.BuildInstantSteal(InstantStealGroup)
@@ -14640,10 +15060,12 @@ LibraryLoader:OnUnload(function()
 	FarmConfig.Admin_AutoTreadmill = false
 	FarmConfig.Admin_InstantSteal = false
 	FarmConfig.Admin_MinigameEggs = false
+	FarmConfig.IslandWars_Auto = false
 	Hub.TheHollow.Active = false
 	RuntimeState.SessionId = RuntimeState.SessionId + 1
 
 	pcall(Hub.GhostDogFishing.Restart)
+	pcall(Hub.IslandWars.RestoreKnock)
 	pcall(Hub.HalloweenMonsters.SetAutoEnabled, false)
 	pcall(Hub.AutoMutate.SetAutoEnabled, false)
 	pcall(Engine.StopSafeZoneVisual)

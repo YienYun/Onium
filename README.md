@@ -57,7 +57,8 @@ Nomor baris di atas mengacu ke commit `b174da4` dan akan bergeser setiap kali fi
 | 5N | 9219 | Auto wisp & banjo cricket |
 | 5O | 9633 | Shooting star |
 | 5P | 9874 | Player movement & character modifiers |
-| 5R | 10349 | Admin abuse: Capture The Egg, Admin Treadmill, Instant Steal, Minigame Eggs |
+| 5R | 10351 | Admin abuse: Capture The Egg, Admin Treadmill, Instant Steal, Minigame Eggs |
+| 5S | 10871 | Cursed Island Wars: bat swing, pumpkin launcher, regroup saat sudden death |
 | 5Q | 10863 – 12484 | ESP suite (egg, guard, player, slot badge) |
 
 Catatan struktur: pembatas scope di sini memakai `do ... end`. 5D membungkus 5E–5P dalam satu blok, 5L–5P punya blok bersarang sendiri, dan 5Q membungkus seluruh ESP. Variabel yang perlu dipakai lintas blok diekspos lewat `Hub.*`, bukan lewat variabel lokal.
@@ -100,7 +101,7 @@ Untuk debug di executor, state yang sama juga tersedia di `getgenv().N3Hub_State
 | --- | --- |
 | Farm | Kiri: Farm Eggs — Kanan: Progression |
 | Pets | Kiri: Auto Place Egg, Auto Mutation, Auto Fuse — Kanan: Auto Hatch & Equip, Auto Sell, Favorite |
-| Event | Kiri: Pumpkin Boss, Ghost Dog & Fishing, The Hollow — Kanan: Phantom Express, Halloween Monsters |
+| Event | Kiri: Pumpkin Boss, Ghost Dog & Fishing, The Hollow, Cursed Island — Kanan: Phantom Express, Halloween Monsters |
 | Admin | Kiri: Capture The Egg, Instant Steal Abuse — Kanan: Admin Treadmill, Minigame Eggs |
 | Quest | Kiri: Auto Butterfly — Kanan: Shooting Star |
 | Player | Kiri: ESP — Kanan: Movement, Character |
@@ -124,6 +125,22 @@ Catatan implementasi:
 - Keempat fitur memakai klaim movement sendiri (`capture`, `admintreadmill`, `instantsteal`, `minigame`), jadi tidak bisa mengemudi bersamaan, dan semuanya menyerah saat auto steal sedang berjalan (`IsAutoStealBusy`).
 - `Take It From The Holder` hanya mengikuti holder: game tidak menyediakan remote untuk merebut egg dari tangan, jadi pengambilan tetap menunggu egg lepas.
 - Titik drop base dipakai bersama oleh auto steal dan instant steal lewat `DELIVERY_DROP_CFRAME` di bagian 2.
+
+### Group Cursed Island (tab Event)
+
+Group `Cursed Island` ada di kolom kiri tab `Event` dan hanya berisi dua kontrol, tanpa status label:
+
+| Kontrol | Perilaku |
+| --- | --- |
+| `Island Wars Target` | `Enemies And Base` (default) memindai musuh dalam radius 25 studs lebih dulu; `Walls And Crystal` melewati pemindaian dan langsung menembak struktur tim lawan. |
+| `Auto Play Curset Island Wars` | Saat `Match`/`SuddenDeath`: ayun `Bat` ke musuh terdekat (≤10 studs, cooldown 0.75 s) lewat `RE/IslandWars/Use` `"Swing"`, lalu tembak `PumpkinLauncher` ke musuh (prediksi `pos + vel * jarak/110`), `Barriers[team].Hitbox`, atau `Crystals[team].Pivot` lewat `"Launch"` (cooldown 1.25 s). Saat `SuddenDeath`, `Warning`, atau `CollapseWarn` aktif, karakter lari ke `Island.Centre.Top` bila jaraknya >18 studs. |
+
+Catatan implementasi:
+
+- Snapshot tim diambil dari `RE/IslandWars/State` dan `RF/IslandWars/Fetch` (dianggap valid 30 detik, refresh tiap 5 detik); event masuk/keluar dipantau lewat `RE/LiveEvents/Began`/`Ended`, cooldown & fase lewat `RE/IslandWars/Moment`.
+- Fase `Prep` hanya dipakai untuk klaim movement (`islandwars`); serangan baru jalan setelah fase berganti ke `Match`/`SuddenDeath`.
+- `Knock` milik modul `CursedIslandWars/Input` dinonaktifkan selama auto play supaya knock dari lawan tidak membuat karakter ragdoll, lalu dipulihkan saat toggle dimatikan, event selesai, atau script di-unload.
+- Icon group memakai `Hub.Icons.Fights` (id stat Fights milik game) karena dex tidak menyimpan icon khusus Cursed Island Wars.
 
 ### Sumber yang Di-fetch
 
