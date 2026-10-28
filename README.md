@@ -152,9 +152,9 @@ Tab `Predictor` dibuat sebelum `Settings` dan seluruh logikanya ada di modul ter
 | --- | --- |
 | `Sort By` | `Value` (income per detik), `Rarity` (rank rarity), `Time Left` (sisa waktu tumbuh paling dekat). |
 | `Show Preview Card` | Menampilkan atau menyembunyikan kartu preview besar. |
-| Kartu preview | Kotak art persegi (tile + rays berputar + bayangan + `EggRecords.EggIcon`) dan kolom teks: nama, rarity, income, `xScale` + berat, bar durasi berisi sisa waktu + persen. |
+| Kartu preview | Kotak art: gambar **pet** (`Assets.Directory[].Icon`) di atas tile + rays berputar + bayangan, dengan badge bulat berisi gambar egg di pojok kanan bawah (masih di dalam kotak art). Kolom teks: nama, mutasi, rarity, income, `xScale` + berat, bar durasi berisi sisa waktu + persen. |
 | Tombol status | `ALL`, `READY`, `GROWING`, `IN BAG` dengan jumlah egg; yang aktif berisi gradient status, sisanya mengikuti warna theme. |
-| Daftar egg | `ScrollingFrame` berisi grid kartu potret (2 kolom, 4 kartu terlihat, sisanya discroll) berisi art persegi, nama, rarity, income, `xScale` + berat, dan bar durasi; klik kartu untuk memilihnya di preview. |
+| Daftar egg | `ScrollingFrame` berisi grid kartu (2 kolom, 4 kartu terlihat, sisanya discroll). Tiap kartu: gambar pet + badge egg bulat di dalam art, label mutasi di kanan atas art, nama, rarity, income, `xScale` + berat, dan bar durasi; klik kartu untuk memilihnya di preview. |
 
 Sumber data semuanya dari modul game, bukan karangan: `EggState.ReadOwnerEggs` (daftar egg), `EggState.IsReadyToHatch`, `EggRecords.GrowthSecondsRemaining` / `GrowthDuration` / `GrowthSpeedMultiplier` / `WeightKg` / `EggIcon`, `Assets.Directory` (nama, rarity, `EarningRate`, icon), dan `Mutations.EarningsFor` (multiplier mutasi). Income memakai rumus Chili: `EarningRate * ScaleFactor(scale) * MutationMultiplier`.
 
@@ -168,7 +168,9 @@ Catatan tampilan:
 - Label bergradient wajib `TextColor3 = white`; warna dasar hitam membuat hasil gradient ikut gelap (bug versi kedua).
 - Lebar frame kustom memakai `UDim2.new(1, -14, ...)` karena `Groupbox.Container` punya `UIPadding` 7px di tiap sisi; memakai `(1, 0)` membuat kartu melebar keluar dan teks terpotong.
 - Warna permukaan, border, dan aksen kartu diambil dari `Groupbox.Holder` (background + `UIStroke` hasil `Library:AddOutline`) supaya mengikuti theme hub.
-- Aksen mewah memakai `SHIMMER_SEQUENCE` warna rarity Secret yang berjalan: strip 3px di tepi kiri tiap kartu, stroke kartu terpilih, dan stroke kartu preview (offset `UIGradient` dianimasikan di `Heartbeat`).
+- Aksen mewah memakai `SHIMMER_SEQUENCE` warna rarity Secret yang berjalan **mengelilingi border** kartu (stroke kedua dengan `UIGradient` yang `Offset`-nya dianimasikan di `Heartbeat`), plus stroke kartu terpilih dan stroke kartu preview. Tidak ada lagi strip di satu sisi saja.
+- Gambar utama kartu adalah **pet** (`Assets.Directory[category].Icon`), bukan egg; gambar egg (`Egg.Icon` / `EggRecords.EggIcon`) dipakai sebagai badge bulat kecil di pojok art.
+- Mutasi dibaca dari `eggData.Mutations` lewat `Mutations.LabelOf` (label) dan `Mutations.Get().Tint` (warna), sehingga nama mutasi tidak di-hardcode; `Rainbow`/`Prismatic` diwarnai per huruf.
 
 ### Sumber yang Di-fetch
 
