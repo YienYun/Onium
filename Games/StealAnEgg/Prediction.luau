@@ -556,6 +556,7 @@ local CONTAINER_PADDING = 7
 local SCROLLBAR_WIDTH = 4
 local GRID_GAP = 7
 local MIN_CARD_WIDTH = 126
+local CARD_MARGIN = 3
 local VISIBLE_ROWS = 2
 local PREVIEW_HEIGHT = 122
 local PREVIEW_ART_SIZE = 106
@@ -881,14 +882,23 @@ local function CardMetrics(cardWidth)
 end
 
 local function CreateCard(parent, entry, metrics, index, theme)
+	local cell = New("Frame", {
+		Name = "PredictorCardCell",
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		LayoutOrder = index,
+		Size = UDim2.fromOffset(metrics.Width + CARD_MARGIN * 2, metrics.Height + CARD_MARGIN * 2),
+		Parent = parent,
+	})
+
 	local card = New("Frame", {
 		Name = "PredictorCard",
 		BackgroundColor3 = theme.Surface,
 		BackgroundTransparency = 0.1,
 		BorderSizePixel = 0,
-		LayoutOrder = index,
+		Position = UDim2.fromOffset(CARD_MARGIN, CARD_MARGIN),
 		Size = UDim2.fromOffset(metrics.Width, metrics.Height),
-		Parent = parent,
+		Parent = cell,
 	}, {
 		New("UICorner", { CornerRadius = UDim.new(0, 9) }),
 	})
@@ -1029,7 +1039,7 @@ local function CreateCard(parent, entry, metrics, index, theme)
 	end)
 
 	return {
-		Frame = card,
+		Frame = cell,
 		Selection = selection,
 		Update = function(current)
 			valueLabel.Text = FormatRate(current.Income)
@@ -1320,19 +1330,25 @@ local function RenderList(entries)
 		width = 300
 	end
 
-	local usable = width - SCROLLBAR_WIDTH
+	local usable = width - SCROLLBAR_WIDTH - CARD_MARGIN * 2
 	local columns = math.clamp(math.floor((usable + GRID_GAP) / (MIN_CARD_WIDTH + GRID_GAP)), 1, 4)
-	local cardWidth = math.floor((usable - GRID_GAP * (columns - 1)) / columns)
-	local metrics = CardMetrics(cardWidth)
+	local cellWidth = math.floor((usable - GRID_GAP * (columns - 1)) / columns)
+	local metrics = CardMetrics(cellWidth - CARD_MARGIN * 2)
+	local cellHeight = metrics.Height + CARD_MARGIN * 2
 
 	ClearCards()
 	PruneShimmers()
-	Prediction.Grid.CellSize = UDim2.fromOffset(metrics.Width, metrics.Height)
+	Prediction.Grid.CellSize = UDim2.fromOffset(cellWidth, cellHeight)
 	Prediction.Grid.CellPadding = UDim2.fromOffset(GRID_GAP, GRID_GAP)
 
 	local rows = math.ceil(#entries / columns)
 	local visibleRows = math.max(1, math.min(rows, VISIBLE_ROWS))
-	scroll.Size = UDim2.new(1, -CONTAINER_PADDING * 2, 0, visibleRows * metrics.Height + math.max(0, visibleRows - 1) * GRID_GAP)
+	scroll.Size = UDim2.new(
+		1,
+		-CONTAINER_PADDING * 2 - CARD_MARGIN * 2,
+		0,
+		visibleRows * cellHeight + math.max(0, visibleRows - 1) * GRID_GAP
+	)
 	Prediction.CardWidth = width
 
 	for index, entry in ipairs(entries) do
@@ -1409,15 +1425,16 @@ function Prediction.Build(groupbox)
 		LayoutOrder = 4,
 		ScrollBarThickness = 3,
 		ScrollBarImageColor3 = Prediction.Theme.Border,
+		VerticalScrollBarInset = Enum.ScrollBarInset.ScrollBar,
 		ScrollingDirection = Enum.ScrollingDirection.Y,
 		CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		Size = UDim2.new(1, -CONTAINER_PADDING * 2, 0, 0),
+		Size = UDim2.new(1, -CONTAINER_PADDING * 2 - CARD_MARGIN * 2, 0, 0),
 		Parent = container,
 	})
 
 	Prediction.Grid = New("UIGridLayout", {
-		CellSize = UDim2.fromOffset(MIN_CARD_WIDTH, 165),
+		CellSize = UDim2.fromOffset(MIN_CARD_WIDTH + CARD_MARGIN * 2, 171),
 		CellPadding = UDim2.fromOffset(GRID_GAP, GRID_GAP),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 		Parent = Prediction.ListFrame,
