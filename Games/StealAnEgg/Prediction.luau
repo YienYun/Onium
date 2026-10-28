@@ -2352,7 +2352,6 @@ local WEBHOOK_CARRY_WINDOW = 90
 local WEBHOOK_SEEN_LIMIT = 4000
 local WEBHOOK_THUMBNAIL_API = "https://thumbnails.roblox.com/v1/assets?assetIds=%s&returnPolicy=PlaceHolder&size=420x420&format=Png&isCircular=false"
 local WEBHOOK_AVATAR_API = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=%d&size=150x150&format=Png&isCircular=false"
-local WEBHOOK_ASSET_FALLBACK_API = "https://www.roblox.com/asset-thumbnail/image?assetId=%s&width=420&height=420&format=png"
 local WEBHOOK_AVATAR_FALLBACK_API = "https://www.roblox.com/headshot-thumbnail/image?userId=%d&width=150&height=150&format=png"
 local WEBHOOK_THUMBNAIL_AUTO_API = "https://thumbnails.roblox.com/v1/assets?assetIds=%s&size=420x420&format=Png&isCircular=false"
 local WEBHOOK_ASSET_IMAGE_API = "https://www.roblox.com/asset-thumbnail/image?assetId=%s&width=420&height=420&format=png"
