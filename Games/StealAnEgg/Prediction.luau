@@ -2352,6 +2352,9 @@ local WEBHOOK_CARRY_WINDOW = 90
 local WEBHOOK_SEEN_LIMIT = 4000
 local WEBHOOK_THUMBNAIL_API = "https://thumbnails.roblox.com/v1/assets?assetIds=%s&size=420x420&format=Png&returnPolicy=PlaceHolder&isCircular=false"
 local WEBHOOK_AVATAR_API = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=%d&size=150x150&format=Png&isCircular=true"
+local WEBHOOK_THUMBNAIL_TRIES = 4
+local WEBHOOK_THUMBNAIL_DELAY = 0.7
+local WEBHOOK_THUMBNAIL_RETRY = 30
 local WEBHOOK_LOG = "[Onium Webhook]"
 
 local Webhook = {
@@ -2369,7 +2372,7 @@ local Webhook = {
 	FuseRewardUid = nil,
 	Carry = nil,
 	ThumbnailCache = {},
-	AvatarThumbnail = nil,
+	ThumbnailRetry = {},
 	Inputs = {},
 	Connection = nil,
 	CarryConnection = nil,
@@ -2565,11 +2568,7 @@ local function FormatMutationDiscord(mutations)
 	return table.concat(parts, "  ·  ")
 end
 
-local function FetchThumbnail(apiUrl)
-	local requestFn = ResolveHttpRequest()
-	if not requestFn then
-		return nil
-	end
+local function RequestThumbnailUrl(requestFn, apiUrl)
 	local callOk, response = pcall(requestFn, { Url = apiUrl, Method = "GET" })
 	if not callOk or type(response) ~= "table" or type(response.Body) ~= "string" then
 		return nil
@@ -2578,10 +2577,50 @@ local function FetchThumbnail(apiUrl)
 		return HttpService:JSONDecode(response.Body)
 	end)
 	local first = decodeOk and type(data) == "table" and type(data.data) == "table" and data.data[1] or nil
-	local imageUrl = type(first) == "table" and first.imageUrl or nil
-	if type(imageUrl) == "string" and imageUrl ~= "" then
+	if type(first) ~= "table" or first.state ~= "Completed" then
+		return nil
+	end
+	local imageUrl = first.imageUrl
+	if type(imageUrl) ~= "string" or not string.find(imageUrl, "/Image/", 1, true) then
+		return nil
+	end
+	return imageUrl
+end
+
+local function FetchThumbnail(apiUrl)
+	local requestFn = ResolveHttpRequest()
+	if not requestFn then
+		return nil
+	end
+	for attempt = 1, WEBHOOK_THUMBNAIL_TRIES do
+		local imageUrl = RequestThumbnailUrl(requestFn, apiUrl)
+		if imageUrl then
+			return imageUrl
+		end
+		if attempt < WEBHOOK_THUMBNAIL_TRIES then
+			task.wait(WEBHOOK_THUMBNAIL_DELAY)
+		end
+	end
+	return nil
+end
+
+local function ResolveThumbnail(cacheKey, apiUrl)
+	local cached = Webhook.ThumbnailCache[cacheKey]
+	if cached ~= nil then
+		return cached
+	end
+	local retryAt = Webhook.ThumbnailRetry[cacheKey]
+	if retryAt ~= nil and os.clock() < retryAt then
+		return nil
+	end
+	local imageUrl = FetchThumbnail(apiUrl)
+	if imageUrl then
+		Webhook.ThumbnailCache[cacheKey] = imageUrl
+		LogWebhook("thumbnail siap: " .. imageUrl)
 		return imageUrl
 	end
+	Webhook.ThumbnailRetry[cacheKey] = os.clock() + WEBHOOK_THUMBNAIL_RETRY
+	LogWebhook("thumbnail belum siap dari Roblox: " .. cacheKey)
 	return nil
 end
 
@@ -2590,20 +2629,11 @@ local function ResolveAssetThumbnail(iconUrl)
 	if not assetId then
 		return nil
 	end
-	local cached = Webhook.ThumbnailCache[assetId]
-	if cached ~= nil then
-		return cached or nil
-	end
-	local imageUrl = FetchThumbnail(string.format(WEBHOOK_THUMBNAIL_API, assetId))
-	Webhook.ThumbnailCache[assetId] = imageUrl or false
-	return imageUrl
+	return ResolveThumbnail("asset_" .. assetId, string.format(WEBHOOK_THUMBNAIL_API, assetId))
 end
 
 local function ResolvePlayerThumbnail()
-	if Webhook.AvatarThumbnail == nil then
-		Webhook.AvatarThumbnail = FetchThumbnail(string.format(WEBHOOK_AVATAR_API, LocalPlayer.UserId)) or false
-	end
-	return Webhook.AvatarThumbnail or nil
+	return ResolveThumbnail("avatar_" .. LocalPlayer.UserId, string.format(WEBHOOK_AVATAR_API, LocalPlayer.UserId))
 end
 
 local function BuildWebhookEmbed(title, payload, source)
