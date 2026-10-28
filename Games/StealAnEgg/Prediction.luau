@@ -2350,11 +2350,14 @@ local WEBHOOK_POLL = 1.5
 local WEBHOOK_SPACING = 1.6
 local WEBHOOK_CARRY_WINDOW = 90
 local WEBHOOK_SEEN_LIMIT = 4000
-local WEBHOOK_THUMBNAIL_API = "https://thumbnails.roblox.com/v1/assets?assetIds=%s&size=420x420&format=Png&returnPolicy=PlaceHolder&isCircular=false"
-local WEBHOOK_AVATAR_API = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=%d&size=150x150&format=Png&isCircular=true"
-local WEBHOOK_THUMBNAIL_TRIES = 4
-local WEBHOOK_THUMBNAIL_DELAY = 0.7
-local WEBHOOK_THUMBNAIL_RETRY = 30
+local WEBHOOK_THUMBNAIL_API = "https://thumbnails.roblox.com/v1/assets?assetIds=%s&returnPolicy=PlaceHolder&size=420x420&format=Png&isCircular=false"
+local WEBHOOK_AVATAR_API = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=%d&size=150x150&format=Png&isCircular=false"
+local WEBHOOK_ASSET_FALLBACK_API = "https://www.roblox.com/asset-thumbnail/image?assetId=%s&width=420&height=420&format=png"
+local WEBHOOK_AVATAR_FALLBACK_API = "https://www.roblox.com/headshot-thumbnail/image?userId=%d&width=150&height=150&format=png"
+local WEBHOOK_THUMBNAIL_TRIES = 5
+local WEBHOOK_THUMBNAIL_DELAY = 1
+local WEBHOOK_THUMBNAIL_RETRY = 20
+local WEBHOOK_PNG_SIGNATURE = "\137PNG\r\n\26\n"
 local WEBHOOK_LOG = "[Onium Webhook]"
 
 local Webhook = {
@@ -2568,59 +2571,115 @@ local function FormatMutationDiscord(mutations)
 	return table.concat(parts, "  ·  ")
 end
 
-local function RequestThumbnailUrl(requestFn, apiUrl)
+local function RequestJson(requestFn, apiUrl)
 	local callOk, response = pcall(requestFn, { Url = apiUrl, Method = "GET" })
-	if not callOk or type(response) ~= "table" or type(response.Body) ~= "string" then
-		return nil
+	if not callOk or type(response) ~= "table" then
+		return nil, "request gagal"
+	end
+	local status = tonumber(response.StatusCode)
+	if status ~= 200 then
+		return nil, "HTTP " .. tostring(response.StatusCode or "?")
 	end
 	local decodeOk, data = pcall(function()
-		return HttpService:JSONDecode(response.Body)
+		return HttpService:JSONDecode(tostring(response.Body))
 	end)
-	local first = decodeOk and type(data) == "table" and type(data.data) == "table" and data.data[1] or nil
-	if type(first) ~= "table" or first.state ~= "Completed" then
-		return nil
+	if not decodeOk or type(data) ~= "table" then
+		return nil, "respons bukan json"
 	end
-	local imageUrl = first.imageUrl
-	if type(imageUrl) ~= "string" or not string.find(imageUrl, "/Image/", 1, true) then
-		return nil
+	local entry = type(data.data) == "table" and data.data[1] or nil
+	if type(entry) ~= "table" then
+		return nil, "data kosong"
+	end
+	return entry
+end
+
+local function ExtractCdnImage(entry, requireImagePath)
+	if entry.state ~= "Completed" then
+		return nil, "state " .. tostring(entry.state)
+	end
+	local imageUrl = entry.imageUrl
+	if type(imageUrl) ~= "string" or imageUrl == "" then
+		return nil, "imageUrl kosong"
+	end
+	if requireImagePath and not string.find(imageUrl, "/Image/", 1, true) then
+		return nil, "masih placeholder"
 	end
 	return imageUrl
 end
 
-local function FetchThumbnail(apiUrl)
+local function RequestThumbnail(apiUrl, requireImagePath)
+	local requestFn = ResolveHttpRequest()
+	if not requestFn then
+		return nil, "transport tidak ada"
+	end
+	local entry, entryError = RequestJson(requestFn, apiUrl)
+	if not entry then
+		return nil, entryError
+	end
+	return ExtractCdnImage(entry, requireImagePath)
+end
+
+local function ProbeImageBytes(apiUrl)
 	local requestFn = ResolveHttpRequest()
 	if not requestFn then
 		return nil
 	end
-	for attempt = 1, WEBHOOK_THUMBNAIL_TRIES do
-		local imageUrl = RequestThumbnailUrl(requestFn, apiUrl)
-		if imageUrl then
-			return imageUrl
-		end
-		if attempt < WEBHOOK_THUMBNAIL_TRIES then
-			task.wait(WEBHOOK_THUMBNAIL_DELAY)
-		end
+	local callOk, response = pcall(requestFn, { Url = apiUrl, Method = "GET" })
+	if not callOk or type(response) ~= "table" then
+		return nil
 	end
-	return nil
+	local body = response.Body
+	if type(body) ~= "string" or string.sub(body, 1, 8) ~= WEBHOOK_PNG_SIGNATURE then
+		return nil
+	end
+	local headers = response.Headers
+	local location = type(headers) == "table" and (headers.Location or headers.location) or nil
+	if type(location) == "string" and string.find(location, "rbxcdn", 1, true) then
+		return location
+	end
+	return apiUrl
 end
 
-local function ResolveThumbnail(cacheKey, apiUrl)
+local function ResolveThumbnail(cacheKey, apiUrl, requireImagePath, fallbackUrl)
 	local cached = Webhook.ThumbnailCache[cacheKey]
 	if cached ~= nil then
-		return cached
+		return cached or nil
 	end
 	local retryAt = Webhook.ThumbnailRetry[cacheKey]
 	if retryAt ~= nil and os.clock() < retryAt then
 		return nil
 	end
-	local imageUrl = FetchThumbnail(apiUrl)
+
+	local imageUrl, lastError
+	for attempt = 1, WEBHOOK_THUMBNAIL_TRIES do
+		imageUrl, lastError = RequestThumbnail(apiUrl, requireImagePath)
+		if imageUrl then
+			break
+		end
+		if attempt < WEBHOOK_THUMBNAIL_TRIES then
+			task.wait(WEBHOOK_THUMBNAIL_DELAY)
+		end
+	end
+
+	if imageUrl and not ProbeImageBytes(imageUrl) then
+		lastError = "cdn tidak mengembalikan png"
+		imageUrl = nil
+	end
+
+	if not imageUrl and fallbackUrl then
+		imageUrl = ProbeImageBytes(fallbackUrl)
+		if not imageUrl then
+			lastError = tostring(lastError) .. ", fallback tidak mengembalikan png"
+		end
+	end
+
 	if imageUrl then
 		Webhook.ThumbnailCache[cacheKey] = imageUrl
-		LogWebhook("thumbnail siap: " .. imageUrl)
 		return imageUrl
 	end
+
 	Webhook.ThumbnailRetry[cacheKey] = os.clock() + WEBHOOK_THUMBNAIL_RETRY
-	LogWebhook("thumbnail belum siap dari Roblox: " .. cacheKey)
+	LogWebhook(string.format("thumbnail gagal (%s) id=%s", tostring(lastError), cacheKey))
 	return nil
 end
 
@@ -2629,11 +2688,21 @@ local function ResolveAssetThumbnail(iconUrl)
 	if not assetId then
 		return nil
 	end
-	return ResolveThumbnail("asset_" .. assetId, string.format(WEBHOOK_THUMBNAIL_API, assetId))
+	return ResolveThumbnail(
+		"asset_" .. assetId,
+		string.format(WEBHOOK_THUMBNAIL_API, assetId),
+		true,
+		string.format(WEBHOOK_ASSET_FALLBACK_API, assetId)
+	)
 end
 
 local function ResolvePlayerThumbnail()
-	return ResolveThumbnail("avatar_" .. LocalPlayer.UserId, string.format(WEBHOOK_AVATAR_API, LocalPlayer.UserId))
+	return ResolveThumbnail(
+		"avatar_" .. LocalPlayer.UserId,
+		string.format(WEBHOOK_AVATAR_API, LocalPlayer.UserId),
+		false,
+		string.format(WEBHOOK_AVATAR_FALLBACK_API, LocalPlayer.UserId)
+	)
 end
 
 local function BuildWebhookEmbed(title, payload, source)
