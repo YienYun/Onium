@@ -15017,9 +15017,9 @@ Hub.Features.BuildPlayerCharacter(PlayerCharGroup)
 PredictionModule.BuildWebhook(DiscordWebhookGroup)
 PredictionModule.Build(EggPredictorGroup, {
 	Icons = {
-		Size = Hub.Icons.Speed,
-		Weight = Hub.Icons.Essence,
-		Egg = "rbxassetid://116524274262912",
+		Size = Hub.Icons.Essence,
+		Weight = Hub.Icons.Speed,
+		Egg = Hub.Icons.Place,
 	},
 	OnGoToEgg = function(entry)
 		local targetRecord = nil
