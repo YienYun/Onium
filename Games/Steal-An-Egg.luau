@@ -2536,35 +2536,37 @@ do
 
 	local function GetDropPoint(cycle)
 		local homePart = Engine.SafeZoneHomePart(safePosition)
-		local startPos = cycle.Root.Position
 		if not homePart then
 			return deliveryDrop
 		end
 
-		local goalPos = Vector3.new(safePosition.X, startPos.Y, safePosition.Z)
 		local function IsInZone(position)
 			local localPos = homePart.CFrame:PointToObjectSpace(position)
 			return math.abs(localPos.X) <= homePart.Size.X * 0.5
 				and math.abs(localPos.Z) <= homePart.Size.Z * 0.5
 		end
 
-		local flatDistance = Vector2.new(goalPos.X - startPos.X, goalPos.Z - startPos.Z).Magnitude
-		if flatDistance < DROP_GAP or IsInZone(startPos) or not IsInZone(goalPos) then
+		local basePos = Vector3.new(safePosition.X, deliveryDrop.Position.Y, safePosition.Z)
+		local frontPos = Vector3.new(deliveryDrop.Position.X, basePos.Y, deliveryDrop.Position.Z)
+		local flatDistance = Vector2.new(frontPos.X - basePos.X, frontPos.Z - basePos.Z).Magnitude
+		if flatDistance < DROP_GAP or not IsInZone(basePos) or IsInZone(frontPos) then
 			return deliveryDrop
 		end
 
 		local lowT, highT = 0, 1
 		for _ = 1, 14 do
 			local midT = (lowT + highT) * 0.5
-			if IsInZone(startPos:Lerp(goalPos, midT)) then
-				highT = midT
-			else
+			if IsInZone(basePos:Lerp(frontPos, midT)) then
 				lowT = midT
+			else
+				highT = midT
 			end
 		end
 
-		local dropPos = startPos:Lerp(goalPos, math.max(highT - DROP_GAP / flatDistance, 0))
-		return CFrame.new(dropPos.X, startPos.Y, dropPos.Z) * cycle.Root.CFrame.Rotation
+		local dropPos = basePos:Lerp(frontPos, math.min(lowT + DROP_GAP / flatDistance, 1))
+		local groundY = ProbeGroundY(cycle, dropPos.X, dropPos.Z)
+		local standY = groundY and (groundY + 3.2) or basePos.Y
+		return CFrame.new(dropPos.X, standY, dropPos.Z) * cycle.Root.CFrame.Rotation
 	end
 
 	local function IsInSafeArea(cycle)
@@ -3356,11 +3358,6 @@ do
 				task.wait(0.1)
 			end
 			cycle.DeliveryDropUid = nil
-			if not IsCycleCurrent(cycle) then
-				return false
-			end
-
-			Glide(cycle, GetSafeDestination(cycle))
 			if not IsCycleCurrent(cycle) then
 				return false
 			end
