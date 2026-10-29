@@ -1687,21 +1687,14 @@ function Engine.SafeZoneParts()
 	return safeZoneParts
 end
 
-function Engine.IsInsideSafeZone(checkPos)
-	local position = checkPos or (Engine.Root() and Engine.Root().Position)
-	if position == nil then
-		return false
-	end
+function Engine.SafeZoneHomePart(homePos)
 	for _, part in ipairs(Engine.SafeZoneParts()) do
-		local localPos = part.CFrame:PointToObjectSpace(position)
-		if math.abs(localPos.X) <= part.Size.X * 0.5
-			and math.abs(localPos.Z) <= part.Size.Z * 0.5
-			and math.abs(localPos.Y) <= part.Size.Y * 0.5 + 14
-		then
-			return true
+		local localPos = part.CFrame:PointToObjectSpace(homePos)
+		if math.abs(localPos.X) <= part.Size.X * 0.5 and math.abs(localPos.Z) <= part.Size.Z * 0.5 then
+			return part
 		end
 	end
-	return false
+	return nil
 end
 
 function Engine.InsideBase(checkPos)
@@ -2539,6 +2532,41 @@ do
 		return CFrame.new(safePosition.X, standY, safePosition.Z) * cycle.Root.CFrame.Rotation
 	end
 
+	local DROP_GAP = 14
+
+	local function GetDropPoint(cycle)
+		local homePart = Engine.SafeZoneHomePart(safePosition)
+		local startPos = cycle.Root.Position
+		if not homePart then
+			return deliveryDrop
+		end
+
+		local goalPos = Vector3.new(safePosition.X, startPos.Y, safePosition.Z)
+		local function IsInZone(position)
+			local localPos = homePart.CFrame:PointToObjectSpace(position)
+			return math.abs(localPos.X) <= homePart.Size.X * 0.5
+				and math.abs(localPos.Z) <= homePart.Size.Z * 0.5
+		end
+
+		local flatDistance = Vector2.new(goalPos.X - startPos.X, goalPos.Z - startPos.Z).Magnitude
+		if flatDistance < DROP_GAP or IsInZone(startPos) or not IsInZone(goalPos) then
+			return deliveryDrop
+		end
+
+		local lowT, highT = 0, 1
+		for _ = 1, 14 do
+			local midT = (lowT + highT) * 0.5
+			if IsInZone(startPos:Lerp(goalPos, midT)) then
+				highT = midT
+			else
+				lowT = midT
+			end
+		end
+
+		local dropPos = startPos:Lerp(goalPos, math.max(highT - DROP_GAP / flatDistance, 0))
+		return CFrame.new(dropPos.X, startPos.Y, dropPos.Z) * cycle.Root.CFrame.Rotation
+	end
+
 	local function IsInSafeArea(cycle)
 		local deltaVec = cycle.Root.Position - safePosition
 		return Vector2.new(deltaVec.X, deltaVec.Z).Magnitude <= 30 and math.abs(deltaVec.Y) <= 18
@@ -3262,21 +3290,10 @@ do
 		if IsCarriedByMe(eggUid) then
 			SetCycleStatus(cycle, "Bringing egg home")
 			cycle.DeliveryDropUid = eggUid
-			Glide(cycle, deliveryDrop, function()
+			local dropTarget = GetDropPoint(cycle)
+			Glide(cycle, dropTarget, function()
 				return not IsCarriedByMe(eggUid)
 			end)
-
-			local dropTarget = deliveryDrop
-			local function MoveIntoDropZone()
-				if not Engine.IsInsideSafeZone(cycle.Root.Position) then
-					dropTarget = GetSafeDestination(cycle)
-					Glide(cycle, dropTarget, function()
-						return not IsCarriedByMe(eggUid)
-					end)
-				end
-			end
-
-			MoveIntoDropZone()
 
 			local dropConfirmed = false
 			for _ = 1, 3 do
@@ -3286,10 +3303,6 @@ do
 				Glide(cycle, dropTarget, function()
 					return not IsCarriedByMe(eggUid)
 				end)
-				if not IsCycleCurrent(cycle) then
-					return false
-				end
-				MoveIntoDropZone()
 				if not IsCycleCurrent(cycle) then
 					return false
 				end
@@ -3352,7 +3365,7 @@ do
 				return false
 			end
 
-			local regrabDestination = droppedPosition and CFrame.new(droppedPosition + Vector3.new(0, 3.2, 0)) or deliveryDrop
+			local regrabDestination = droppedPosition and CFrame.new(droppedPosition + Vector3.new(0, 3.2, 0)) or dropTarget
 			Glide(cycle, regrabDestination, function()
 				return IsCarriedByMe(eggUid)
 			end)
