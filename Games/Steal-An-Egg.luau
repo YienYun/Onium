@@ -302,7 +302,7 @@ local Remotes = {
 
 local SAFE_BASE_LINE_X = 552
 local SAFE_CORRIDOR_Z = -364
-local SAFE_HOME_POSITION = Vector3.new(544.76, 71.5, -416.48)
+local DELIVERY_DROP_CFRAME = CFrame.new(616.749, 71.667, -395.585)
 
 local FarmConfig = {
 	AutoStealEnabled = false,
@@ -1665,38 +1665,26 @@ function Engine.GetSeparationX()
 end
 
 local SAFE_ZONE_TAG = "SafeZone"
-local safeZoneCache, safeZoneCheckedAt = {}, 0
+local safeZoneParts, safeZoneCheckedAt = {}, 0
 
 function Engine.SafeZoneParts()
 	local now = os.clock()
-	if now - safeZoneCheckedAt < 1 and #safeZoneCache > 0 then
-		return safeZoneCache
+	if now - safeZoneCheckedAt < 1 and #safeZoneParts > 0 then
+		return safeZoneParts
 	end
 
 	safeZoneCheckedAt = now
-	table.clear(safeZoneCache)
+	table.clear(safeZoneParts)
 	local callOk, tagged = pcall(CollectionService.GetTagged, CollectionService, SAFE_ZONE_TAG)
 	if callOk and type(tagged) == "table" then
 		for _, part in ipairs(tagged) do
 			if part:IsA("BasePart") and part:IsDescendantOf(Workspace) then
-				table.insert(safeZoneCache, part)
+				table.insert(safeZoneParts, part)
 			end
 		end
 	end
 
-	return safeZoneCache
-end
-
-local function InsideSafeFootprint(part, position, padding)
-	local localPos = part.CFrame:PointToObjectSpace(position)
-	local margin = padding or 0
-	local halfX = math.max(part.Size.X * 0.5 - margin, 0)
-	local halfZ = math.max(part.Size.Z * 0.5 - margin, 0)
-	local halfY = part.Size.Y * 0.5 + 14
-	local inside = math.abs(localPos.X) <= halfX
-		and math.abs(localPos.Z) <= halfZ
-		and math.abs(localPos.Y) <= halfY
-	return inside, localPos
+	return safeZoneParts
 end
 
 function Engine.IsInsideSafeZone(checkPos)
@@ -1705,57 +1693,15 @@ function Engine.IsInsideSafeZone(checkPos)
 		return false
 	end
 	for _, part in ipairs(Engine.SafeZoneParts()) do
-		if InsideSafeFootprint(part, position, 0) then
+		local localPos = part.CFrame:PointToObjectSpace(position)
+		if math.abs(localPos.X) <= part.Size.X * 0.5
+			and math.abs(localPos.Z) <= part.Size.Z * 0.5
+			and math.abs(localPos.Y) <= part.Size.Y * 0.5 + 14
+		then
 			return true
 		end
 	end
 	return false
-end
-
-function Engine.CanDropAt(checkPos)
-	if #Engine.SafeZoneParts() == 0 then
-		return true
-	end
-	return Engine.IsInsideSafeZone(checkPos)
-end
-
-function Engine.ClampToSafeZone(checkPos, padding)
-	local position = checkPos or (Engine.Root() and Engine.Root().Position)
-	if position == nil then
-		return nil
-	end
-
-	local bestPart, bestDistance, bestLocal = nil, math.huge, nil
-	for _, part in ipairs(Engine.SafeZoneParts()) do
-		local inside, localPos = InsideSafeFootprint(part, position, 0)
-		local ownsHome = InsideSafeFootprint(part, SAFE_HOME_POSITION, 0)
-		local distance
-		if ownsHome then
-			distance = -2
-		elseif inside then
-			distance = -1
-		else
-			distance = Vector2.new(part.Position.X - position.X, part.Position.Z - position.Z).Magnitude
-		end
-		if distance < bestDistance then
-			bestPart, bestDistance, bestLocal = part, distance, localPos
-		end
-	end
-
-	if not bestPart then
-		return nil
-	end
-
-	local margin = math.max(padding or 6, 0)
-	local halfX = math.max(bestPart.Size.X * 0.5 - margin, 0)
-	local halfZ = math.max(bestPart.Size.Z * 0.5 - margin, 0)
-	local clamped = Vector3.new(
-		math.clamp(bestLocal.X, -halfX, halfX),
-		bestLocal.Y,
-		math.clamp(bestLocal.Z, -halfZ, halfZ)
-	)
-
-	return bestPart, bestPart.CFrame:PointToWorldSpace(clamped)
 end
 
 function Engine.InsideBase(checkPos)
@@ -2451,7 +2397,8 @@ do
 	local retryUid, resetBlocked, gateOpenAt = nil, false, 0
 	local nextTickClock, wakePending = 0, true
 
-	local safePosition = SAFE_HOME_POSITION
+	local safePosition = Vector3.new(544.76, 71.5, -416.48)
+	local deliveryDrop = DELIVERY_DROP_CFRAME
 	local eggStates = (AreaEggTypesModule and AreaEggTypesModule.States)
 		or { Slot = "Slot", Dropped = "Dropped", Carried = "Carried", Claimed = "Claimed" }
 
@@ -2586,18 +2533,10 @@ do
 		return nil
 	end
 
-	local function StandCFrame(cycle, worldPos)
-		local groundY = ProbeGroundY(cycle, worldPos.X, worldPos.Z)
-		local standY = groundY and (groundY + 3.2) or worldPos.Y
-		return CFrame.new(worldPos.X, standY, worldPos.Z) * cycle.Root.CFrame.Rotation
-	end
-
 	local function GetSafeDestination(cycle)
-		local safePart, clampedPos = Engine.ClampToSafeZone(safePosition, 10)
-		if not safePart or not clampedPos then
-			clampedPos = safePosition
-		end
-		return StandCFrame(cycle, clampedPos)
+		local groundY = ProbeGroundY(cycle, safePosition.X, safePosition.Z)
+		local standY = groundY and (groundY + 3.2) or safePosition.Y
+		return CFrame.new(safePosition.X, standY, safePosition.Z) * cycle.Root.CFrame.Rotation
 	end
 
 	local function IsInSafeArea(cycle)
@@ -3323,20 +3262,34 @@ do
 		if IsCarriedByMe(eggUid) then
 			SetCycleStatus(cycle, "Bringing egg home")
 			cycle.DeliveryDropUid = eggUid
-
-			local dropDestination = GetSafeDestination(cycle)
-			Glide(cycle, dropDestination, function()
+			Glide(cycle, deliveryDrop, function()
 				return not IsCarriedByMe(eggUid)
 			end)
+
+			local dropTarget = deliveryDrop
+			local function MoveIntoDropZone()
+				if not Engine.IsInsideSafeZone(cycle.Root.Position) then
+					dropTarget = GetSafeDestination(cycle)
+					Glide(cycle, dropTarget, function()
+						return not IsCarriedByMe(eggUid)
+					end)
+				end
+			end
+
+			MoveIntoDropZone()
 
 			local dropConfirmed = false
 			for _ = 1, 3 do
 				if not IsCycleCurrent(cycle) or not IsCarriedByMe(eggUid) then
 					break
 				end
-				Glide(cycle, dropDestination, function()
+				Glide(cycle, dropTarget, function()
 					return not IsCarriedByMe(eggUid)
 				end)
+				if not IsCycleCurrent(cycle) then
+					return false
+				end
+				MoveIntoDropZone()
 				if not IsCycleCurrent(cycle) then
 					return false
 				end
@@ -3345,11 +3298,7 @@ do
 					if not IsCycleCurrent(cycle) then
 						return false
 					end
-					if IsCarriedByMe(eggUid)
-						and Engine.CanDropAt(cycle.Root.Position)
-						and EggStateModule
-						and type(EggStateModule.DropFieldEgg) == "function"
-					then
+					if IsCarriedByMe(eggUid) and EggStateModule and type(EggStateModule.DropFieldEgg) == "function" then
 						Engine.RecordAutoTrace("delivery-drop-request", eggUid)
 						pcall(EggStateModule.DropFieldEgg, "PlayerRequest")
 					end
@@ -3398,18 +3347,12 @@ do
 				return false
 			end
 
-			if droppedPosition and not Engine.CanDropAt(droppedPosition) then
-				Engine.RecordAutoTrace("delivery-drop-outside-safe-zone", eggUid)
-				SetCycleStatus(cycle, "Drop landed outside the safe zone - pulling it back")
-			end
-
 			Glide(cycle, GetSafeDestination(cycle))
 			if not IsCycleCurrent(cycle) then
 				return false
 			end
 
-			local regrabDestination = droppedPosition and CFrame.new(droppedPosition + Vector3.new(0, 3.2, 0))
-				or GetSafeDestination(cycle)
+			local regrabDestination = droppedPosition and CFrame.new(droppedPosition + Vector3.new(0, 3.2, 0)) or deliveryDrop
 			Glide(cycle, regrabDestination, function()
 				return IsCarriedByMe(eggUid)
 			end)
@@ -3708,18 +3651,7 @@ do
 
 		if not IsCarriedByMe(eggUid) then
 			local targetRecord = ReadEgg(eggUid) or targetCandidate.Raw
-			if not IsEggAvailable(targetRecord) then
-				return
-			end
-			if not ApproachEgg(cycle, targetRecord) or not RequestTargetCarry(cycle, targetRecord) then
-				if IsCycleCurrent(cycle) then
-					if IsEggAvailable(ReadEgg(eggUid)) then
-						retryUid = eggUid
-					end
-					Engine.RecordAutoTrace("carry-failed-return", eggUid)
-					SetCycleStatus(cycle, "Carry failed - returning to safe zone")
-					Glide(cycle, GetSafeDestination(cycle))
-				end
+			if not IsEggAvailable(targetRecord) or not ApproachEgg(cycle, targetRecord) or not RequestTargetCarry(cycle, targetRecord) then
 				return
 			end
 		end
@@ -3760,10 +3692,6 @@ do
 			if IsCarriedByMe(eggUid) then
 				task.wait(0.35)
 			elseif not RecoverDroppedCarry(cycle, eggUid) then
-				if IsCycleCurrent(cycle) and IsEggAvailable(ReadEgg(eggUid)) then
-					retryUid = eggUid
-					Engine.RecordAutoTrace("recover-failed-retry-next", eggUid)
-				end
 				return
 			end
 		end
@@ -10900,17 +10828,10 @@ do
 					return
 				end
 				instantState.Status = "Bringing the stolen egg home"
-				local _, safeDropPos = Engine.ClampToSafeZone(nil, 12)
-				local dropTarget = (safeDropPos or SAFE_HOME_POSITION) + Vector3.new(0, 3, 0)
-				DriftToPoint(dropTarget, APPROACH_SPEED, function()
+				DriftToPoint(DELIVERY_DROP_CFRAME.Position + Vector3.new(0, 3, 0), APPROACH_SPEED, function()
 					return not FarmConfig.Admin_InstantSteal or not Engine.AutoCarry.Carrying
 				end, 8)
-				local selfRoot = Engine.Root()
-				if Engine.AutoCarry.Carrying
-					and Engine.CanDropAt(selfRoot and selfRoot.Position)
-					and EggStateModule
-					and type(EggStateModule.DropFieldEgg) == "function"
-				then
+				if Engine.AutoCarry.Carrying and EggStateModule and type(EggStateModule.DropFieldEgg) == "function" then
 					pcall(EggStateModule.DropFieldEgg, "PlayerRequest")
 					task.wait(0.4)
 				end
