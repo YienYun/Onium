@@ -1664,39 +1664,6 @@ function Engine.GetSeparationX()
 	return SAFE_BASE_LINE_X
 end
 
-local SAFE_ZONE_TAG = "SafeZone"
-local safeZoneParts, safeZoneCheckedAt = {}, 0
-
-function Engine.SafeZoneParts()
-	local now = os.clock()
-	if now - safeZoneCheckedAt < 1 and #safeZoneParts > 0 then
-		return safeZoneParts
-	end
-
-	safeZoneCheckedAt = now
-	table.clear(safeZoneParts)
-	local callOk, tagged = pcall(CollectionService.GetTagged, CollectionService, SAFE_ZONE_TAG)
-	if callOk and type(tagged) == "table" then
-		for _, part in ipairs(tagged) do
-			if part:IsA("BasePart") and part:IsDescendantOf(Workspace) then
-				table.insert(safeZoneParts, part)
-			end
-		end
-	end
-
-	return safeZoneParts
-end
-
-function Engine.SafeZoneHomePart(homePos)
-	for _, part in ipairs(Engine.SafeZoneParts()) do
-		local localPos = part.CFrame:PointToObjectSpace(homePos)
-		if math.abs(localPos.X) <= part.Size.X * 0.5 and math.abs(localPos.Z) <= part.Size.Z * 0.5 then
-			return part
-		end
-	end
-	return nil
-end
-
 function Engine.InsideBase(checkPos)
 	if checkPos == nil then
 		local rootPart = Engine.Root()
@@ -2532,41 +2499,29 @@ do
 		return CFrame.new(safePosition.X, standY, safePosition.Z) * cycle.Root.CFrame.Rotation
 	end
 
-	local DROP_GAP = 14
+	local DROP_GAP = 12
+	local DROP_ALIGN = 14
 
 	local function GetDropPoint(cycle)
-		local homePart = Engine.SafeZoneHomePart(safePosition)
-		if not homePart then
-			return deliveryDrop
-		end
+		local dropX = Engine.GetSeparationX() + DROP_GAP
+		local groundY = ProbeGroundY(cycle, dropX, safePosition.Z)
+		local standY = groundY and (groundY + 3.2) or deliveryDrop.Position.Y
+		return CFrame.new(dropX, standY, safePosition.Z) * cycle.Root.CFrame.Rotation
+	end
 
-		local function IsInZone(position)
-			local localPos = homePart.CFrame:PointToObjectSpace(position)
-			return math.abs(localPos.X) <= homePart.Size.X * 0.5
-				and math.abs(localPos.Z) <= homePart.Size.Z * 0.5
-		end
-
-		local basePos = Vector3.new(safePosition.X, deliveryDrop.Position.Y, safePosition.Z)
-		local frontPos = Vector3.new(deliveryDrop.Position.X, basePos.Y, deliveryDrop.Position.Z)
-		local flatDistance = Vector2.new(frontPos.X - basePos.X, frontPos.Z - basePos.Z).Magnitude
-		if flatDistance < DROP_GAP or not IsInZone(basePos) or IsInZone(frontPos) then
-			return deliveryDrop
-		end
-
-		local lowT, highT = 0, 1
-		for _ = 1, 14 do
-			local midT = (lowT + highT) * 0.5
-			if IsInZone(basePos:Lerp(frontPos, midT)) then
-				lowT = midT
-			else
-				highT = midT
+	local function WaitCarrySynced(cycle, eggUid)
+		local syncDeadline = os.clock() + 0.8
+		while IsCycleCurrent(cycle) and os.clock() < syncDeadline do
+			cycle.Root.AssemblyLinearVelocity = Vector3.zero
+			cycle.Root.AssemblyAngularVelocity = Vector3.zero
+			local eggRecord = ReadEgg(eggUid)
+			local eggCF = eggRecord and (eggRecord.BottomCFrame or eggRecord.BoundsCFrame)
+			if eggCF and (eggCF.Position - cycle.Root.Position).Magnitude <= DROP_ALIGN then
+				return true
 			end
+			task.wait(0.06)
 		end
-
-		local dropPos = basePos:Lerp(frontPos, math.min(lowT + DROP_GAP / flatDistance, 1))
-		local groundY = ProbeGroundY(cycle, dropPos.X, dropPos.Z)
-		local standY = groundY and (groundY + 3.2) or basePos.Y
-		return CFrame.new(dropPos.X, standY, dropPos.Z) * cycle.Root.CFrame.Rotation
+		return IsCycleCurrent(cycle)
 	end
 
 	local function IsInSafeArea(cycle)
@@ -3310,6 +3265,10 @@ do
 				end
 				if IsCarriedByMe(eggUid) then
 					task.wait(0.15)
+					if not IsCycleCurrent(cycle) then
+						return false
+					end
+					WaitCarrySynced(cycle, eggUid)
 					if not IsCycleCurrent(cycle) then
 						return false
 					end
