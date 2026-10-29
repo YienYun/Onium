@@ -589,6 +589,8 @@ local CARD_MARGIN = 2
 local LIST_COLUMNS = 4
 local SHIMMER_SPEED = 0.9
 local SHIMMER_ROTATION = 45
+local SURFACE_SPEED = 0.3
+local SURFACE_SWEEP = 0.16
 
 Prediction.Shimmers = {}
 Prediction.Theme = nil
@@ -688,7 +690,54 @@ local function ReadSurfaceStyle(entry)
 	return style
 end
 
-local function PaintSurface(target, entry, transparency, animate)
+local LEGENDARY_STYLE = nil
+
+local function ReadLegendaryStyle()
+	if LEGENDARY_STYLE ~= nil then
+		return LEGENDARY_STYLE or nil
+	end
+
+	LEGENDARY_STYLE = false
+	local gradient = ReadRarityGradient("Legendary")
+	if gradient then
+		LEGENDARY_STYLE = {
+			Color = gradient.Color,
+			Rotation = gradient.Rotation,
+			Offset = gradient.Offset,
+			Transparency = gradient.Transparency,
+		}
+	end
+
+	return LEGENDARY_STYLE or nil
+end
+
+local function Luminance(color)
+	return color.R * 0.299 + color.G * 0.587 + color.B * 0.114
+end
+
+local function RecolorSequence(template, palette)
+	local total = 0
+	for _, keypoint in ipairs(template.Keypoints) do
+		total += Luminance(keypoint.Value)
+	end
+
+	local mean = total / #template.Keypoints
+	local keypoints = {}
+	for _, keypoint in ipairs(template.Keypoints) do
+		local tint = SampleSequence(palette, keypoint.Time)
+		local delta = mean > 0.02 and (Luminance(keypoint.Value) - mean) / mean or 0
+		if delta >= 0 then
+			tint = tint:Lerp(COLORS.Text, math.clamp(delta * 0.9, 0, 0.85))
+		else
+			tint = tint:Lerp(SHADE, math.clamp(-delta * 0.9, 0, 0.8))
+		end
+		table.insert(keypoints, ColorSequenceKeypoint.new(keypoint.Time, tint))
+	end
+
+	return ColorSequence.new(keypoints)
+end
+
+local function PaintSurface(target, entry, transparency, animate, phase)
 	local style = ReadSurfaceStyle(entry)
 	local gradient = target:FindFirstChild("SurfacePaint")
 	if not gradient then
@@ -697,22 +746,30 @@ local function PaintSurface(target, entry, transparency, animate)
 
 	target.BackgroundColor3 = style.Background
 
+	local legendary = ReadLegendaryStyle()
+	local palette = ReadRaritySequence(entry)
 	local source = style.Gradient
-	if source then
+
+	if legendary then
+		gradient.Color = RecolorSequence(legendary.Color, palette)
+		gradient.Rotation = legendary.Rotation
+		gradient.Offset = legendary.Offset
+		gradient.Transparency = transparency or legendary.Transparency
+	elseif source then
 		gradient.Color = source.Color
-		gradient.Enabled = source.Enabled
 		gradient.Rotation = source.Rotation
 		gradient.Offset = source.Offset
 		gradient.Transparency = transparency or source.Transparency
 	else
 		gradient.Color = ColorSequence.new(style.FallbackColor, style.FallbackColor:Lerp(COLORS.Text, 0.25))
-		gradient.Enabled = true
 		gradient.Rotation = 90
 		gradient.Offset = Vector2.zero
 		gradient.Transparency = transparency or NumberSequence.new(0)
 	end
 
+	gradient.Enabled = true
 	gradient:SetAttribute("SurfaceBase", gradient.Offset)
+	gradient:SetAttribute("SurfacePhase", phase or 0)
 
 	if animate and not gradient:GetAttribute("Animated") then
 		gradient:SetAttribute("Animated", true)
@@ -723,11 +780,12 @@ local function PaintSurface(target, entry, transparency, animate)
 end
 
 local function AnimateSurfaces(now)
-	local wave = math.sin(now * 0.35) * 0.12
 	for _, gradient in ipairs(Prediction.Surfaces) do
 		if gradient.Parent then
 			local base = gradient:GetAttribute("SurfaceBase") or Vector2.zero
-			gradient.Offset = Vector2.new(base.X + wave, base.Y)
+			local phase = gradient:GetAttribute("SurfacePhase") or 0
+			local shift = math.sin(now * SURFACE_SPEED + phase) * SURFACE_SWEEP
+			gradient.Offset = Vector2.new(base.X + shift, base.Y)
 		end
 	end
 end
@@ -857,6 +915,18 @@ local function CreateProgressBar(parent, height, textSize, theme)
 end
 
 local function CreateArtBox(parent, entry, position, size, badgeSize, theme, showShadow)
+	local glow = New("ImageLabel", {
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(1.3, 1.2),
+		Image = PREVIEW_SHADOW_ASSET,
+		ImageColor3 = entry.RarityColor,
+		ImageTransparency = 0.4,
+		ScaleType = Enum.ScaleType.Stretch,
+		ZIndex = 2,
+	})
+
 	local petImage = New("ImageLabel", {
 		BackgroundTransparency = 1,
 		AnchorPoint = Vector2.new(0.5, 0.5),
@@ -864,7 +934,7 @@ local function CreateArtBox(parent, entry, position, size, badgeSize, theme, sho
 		Size = UDim2.fromScale(0.86, 0.86),
 		Image = entry.PetIcon,
 		ScaleType = Enum.ScaleType.Fit,
-		ZIndex = 2,
+		ZIndex = 3,
 	})
 
 	local badgeStroke = New("UIStroke", {
@@ -916,6 +986,7 @@ local function CreateArtBox(parent, entry, position, size, badgeSize, theme, sho
 			TileSize = UDim2.fromScale(0.34, 0.42),
 			Size = UDim2.fromScale(1, 1),
 		}),
+		glow,
 		petImage,
 		New("Frame", {
 			BackgroundColor3 = COLORS.Text,
@@ -955,6 +1026,7 @@ local function CreateArtBox(parent, entry, position, size, badgeSize, theme, sho
 		Frame = art,
 		Pet = petImage,
 		Egg = eggImage,
+		Glow = glow,
 		Badge = badge,
 		BadgeStroke = badgeStroke,
 	}
@@ -1133,7 +1205,7 @@ local function CreateCard(parent, entry, metrics, index, theme)
 	}, {
 		New("UICorner", { CornerRadius = cornerRadius }),
 	})
-	PaintSurface(card, entry, nil, false)
+	PaintSurface(card, entry, NumberSequence.new(0), true, index * 0.55)
 
 	New("UIStroke", {
 		Color = COLORS.Text,
@@ -1177,7 +1249,7 @@ local function CreateCard(parent, entry, metrics, index, theme)
 		theme,
 		false
 	)
-	PaintSurface(artBox.Frame, entry, NumberSequence.new(0.5, 0.9), false)
+	PaintSurface(artBox.Frame, entry, NumberSequence.new(0.25, 0.8), true, index * 0.55)
 	artBox.Pet.Size = UDim2.fromScale(0.94, 0.94)
 	AddGloss(artBox.Frame, 7)
 
@@ -1597,6 +1669,7 @@ local function CreatePreview(parent, theme)
 	local preview = {
 		Frame = frame,
 		Art = artBox.Frame,
+		Glow = artBox.Glow,
 		Rays = rays,
 		Key = nil,
 		Entry = nil,
@@ -1627,6 +1700,8 @@ local function CreatePreview(parent, theme)
 			artBox.Egg.Image = ""
 			eggSwap.Image = ""
 			eggSwap.ImageTransparency = 1
+			artBox.Glow.ImageColor3 = COLORS.Text
+			artBox.Glow.ImageTransparency = 0.45
 			PaintGradient(frame, "SurfacePaint", ColorSequence.new(theme.Surface, COLORS.ShadowTint), 90)
 			PaintGradient(artBox.Frame, "SurfacePaint", ColorSequence.new(theme.Surface, theme.Surface), 90)
 			ApplyStatusFill(bar, nil)
@@ -1644,8 +1719,10 @@ local function CreatePreview(parent, theme)
 			artBox.Pet.ImageTransparency = 0
 			eggSwap.ImageTransparency = 1
 			artBox.BadgeStroke.Color = entry.RarityColor
-			PaintSurface(frame, entry, nil, true)
-			PaintSurface(artBox.Frame, entry, NumberSequence.new(0.45, 0.88), false)
+			artBox.Glow.ImageColor3 = entry.RarityColor
+			artBox.Glow.ImageTransparency = 0.3
+			PaintSurface(frame, entry, NumberSequence.new(0), true, 0)
+			PaintSurface(artBox.Frame, entry, NumberSequence.new(0.25, 0.8), true, 0)
 			nameLabel.Text = entry.Name
 			PaintRarityText(nameLabel, entry, true)
 			rarityChip.Visible = true
@@ -1973,6 +2050,9 @@ function Prediction.Build(groupbox, hooks)
 		if preview and preview.Frame.Visible then
 			Prediction.RaysAngle = (Prediction.RaysAngle + delta * 14) % 360
 			preview.Rays.Rotation = Prediction.RaysAngle
+			if preview.Entry then
+				preview.Glow.ImageTransparency = 0.3 + math.sin(now * 0.9) * 0.07
+			end
 		end
 
 		if now < Prediction.NextRefreshAt then
