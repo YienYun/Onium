@@ -1664,6 +1664,47 @@ function Engine.GetSeparationX()
 	return SAFE_BASE_LINE_X
 end
 
+local carryZoneParts, carryZoneCheckedAt = {}, 0
+
+function Engine.CarryZoneParts()
+	local now = os.clock()
+	if now - carryZoneCheckedAt < 5 and #carryZoneParts > 0 then
+		return carryZoneParts
+	end
+
+	carryZoneCheckedAt = now
+	table.clear(carryZoneParts)
+	local worldFolder = Workspace:FindFirstChild("World") or Workspace:FindFirstChild("__OBJECTS")
+	local areasFolder = worldFolder and worldFolder:FindFirstChild("Areas")
+	local boundsFolder = areasFolder and areasFolder:FindFirstChild("EggCarryBounds")
+	if boundsFolder then
+		for _, part in ipairs(boundsFolder:GetChildren()) do
+			if part:IsA("BasePart") and part.Name ~= "SafeZone" then
+				table.insert(carryZoneParts, part)
+			end
+		end
+	end
+
+	return carryZoneParts
+end
+
+function Engine.CarryZoneAt(checkPos)
+	local position = checkPos or (Engine.Root() and Engine.Root().Position)
+	if position == nil then
+		return nil
+	end
+	for _, part in ipairs(Engine.CarryZoneParts()) do
+		local localPos = part.CFrame:PointToObjectSpace(position)
+		if math.abs(localPos.X) <= part.Size.X * 0.5
+			and math.abs(localPos.Z) <= part.Size.Z * 0.5
+			and math.abs(localPos.Y) <= part.Size.Y * 0.5 + 40
+		then
+			return part
+		end
+	end
+	return nil
+end
+
 function Engine.InsideBase(checkPos)
 	if checkPos == nil then
 		local rootPart = Engine.Root()
@@ -3218,8 +3259,9 @@ do
 		return wornConfirmed and leftConfirmed
 	end
 
-	local CARRY_LEG_COUNT = 5
-	local CARRY_LEG_MIN_DISTANCE = 40
+	local CARRY_DROP_LIMIT = 4
+	local CARRY_DROP_MIN_DISTANCE = 40
+	local CARRY_DROP_MIN_TRAVEL = 120
 
 	local function DropAndRegrab(cycle, eggUid, destinationCF)
 		Glide(cycle, destinationCF, function()
@@ -3271,12 +3313,28 @@ do
 			local dropTarget = GetDropPoint(cycle)
 
 			local carryOrigin = cycle.Root.Position
-			if (carryOrigin - dropTarget.Position).Magnitude > CARRY_LEG_MIN_DISTANCE then
-				for leg = 1, CARRY_LEG_COUNT - 1 do
-					local legPos = carryOrigin:Lerp(dropTarget.Position, leg / CARRY_LEG_COUNT)
-					if not DropAndRegrab(cycle, eggUid, CFrame.new(legPos) * cycle.Root.CFrame.Rotation) then
-						break
+			local dropsDone = 0
+			while IsCycleCurrent(cycle)
+				and IsCarriedByMe(eggUid)
+				and dropsDone < CARRY_DROP_LIMIT
+				and (cycle.Root.Position - dropTarget.Position).Magnitude > CARRY_DROP_MIN_DISTANCE
+			do
+				local zoneAtStart = Engine.CarryZoneAt(cycle.Root.Position)
+				local arrived = Glide(cycle, dropTarget, function()
+					if not IsCarriedByMe(eggUid) then
+						return true
 					end
+					local zoneNow = Engine.CarryZoneAt(cycle.Root.Position)
+					return zoneNow ~= nil
+						and zoneNow ~= zoneAtStart
+						and (cycle.Root.Position - carryOrigin).Magnitude > CARRY_DROP_MIN_TRAVEL
+				end)
+				if not IsCycleCurrent(cycle) or not IsCarriedByMe(eggUid) or arrived then
+					break
+				end
+				dropsDone = dropsDone + 1
+				if not DropAndRegrab(cycle, eggUid, cycle.Root.CFrame) then
+					break
 				end
 			end
 
