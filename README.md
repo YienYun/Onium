@@ -204,7 +204,9 @@ Layout tab (sejak groupbox lebar tersedia):
 
 Catatan tampilan:
 
-- Latar kartu (preview maupun kartu list) memakai gradient rarity game (`BuildArtSequence`, dicerahkan 14%): DIVINE jadi emas, ETERNAL ungu, SECRET silver.
+- Latar kartu memakai template rarity milik game: `ReplicatedStorage.Assets.UI.RarityGradients/<Rarity>` dibaca langsung (`ReadSurfaceStyle`) untuk mengambil `RarityGradient` (Color/Transparency/Rotation/Offset) dan `ItemTemplate` (BackgroundColor3, `UICorner`, `UIStroke` + gradient-nya). Jadi warna, gradient tajam, sudut, dan border kartu sama dengan tombol rarity di `AutoSell`, bukan tebakan.
+- Gradient permukaan kartu dianimasikan (`AnimateSurfaces` menggeser `Offset`), sama seperti efek kilau di UI game.
+- Kalau folder rarity tidak ada, warna jatuh ke `RarityColor` dari `Assets.Directory` lalu dicerahkan 14% (`BuildArtSequence`).
 - Semua teks memakai font display bold + `UIStroke` gelap (`AddTextStroke`) dan bagian bawah kartu diberi shade gradient (`AddTextShade`), jadi teks tetap terbaca di kartu terang maupun gelap.
 - Kartu list memakai lapisan gloss di art (`AddGloss`) dan bayangan lembut di belakang kartu untuk kesan timbul.
 - Kartu preview: art pet + glow berputar, badge egg bundar, chip `RANK n` kiri atas, mutasi bertumpuk di kanan atas, nama bold, pill rarity, income besar, dua pill `SIZE`/`WEIGHT` (dengan icon), bar status, dan tombol `Go to egg` berikon egg.
