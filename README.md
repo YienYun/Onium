@@ -205,7 +205,9 @@ Layout tab (sejak groupbox lebar tersedia):
 Catatan tampilan:
 
 - Latar kartu memakai template rarity milik game: `ReplicatedStorage.Assets.UI.RarityGradients/<Rarity>` dibaca langsung (`ReadSurfaceStyle`) untuk mengambil `RarityGradient` (Color/Transparency/Rotation/Offset) dan `ItemTemplate` (BackgroundColor3, `UICorner`, `UIStroke` + gradient-nya). Jadi warna, gradient tajam, sudut, dan border kartu sama dengan tombol rarity di `AutoSell`, bukan tebakan.
-- Gradient permukaan kartu dianimasikan (`AnimateSurfaces` menggeser `Offset`), sama seperti efek kilau di UI game.
+- Semua kartu memakai satu gaya permukaan premium ala kartu LEGENDARY (`BuildPremiumSequence`: pita terang-gelap dari warna rarity), jadi setiap rarity punya background berkilau yang sama strukturnya tapi warnanya sesuai rarity-nya. `AnimateSurfaces` menggeser `Offset` sehingga pitanya berjalan.
+- Teks rarity (kartu dan pill di preview) memakai `PaintSparkleText` dengan `BuildSparkleSequence`: pita highlight sempit yang bergerak, dan untuk SECRET dipakai kilau hitam-putih lembut (bukan gradasi pekat).
+- Pill rarity di preview sekarang gelap dengan border gradient rarity dan teks berkilau, bukan teks tanpa warna.
 - Kalau folder rarity tidak ada, warna jatuh ke `RarityColor` dari `Assets.Directory` lalu dicerahkan 14% (`BuildArtSequence`).
 - Semua teks memakai font display bold + `UIStroke` gelap (`AddTextStroke`) dan bagian bawah kartu diberi shade gradient (`AddTextShade`), jadi teks tetap terbaca di kartu terang maupun gelap.
 - Kartu list memakai lapisan gloss di art (`AddGloss`) dan bayangan lembut di belakang kartu untuk kesan timbul.

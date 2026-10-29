@@ -56,6 +56,7 @@ local Prediction = {
 	Hooks = nil,
 	Icons = nil,
 	Surfaces = {},
+	SparkleTexts = {},
 	NextRefreshAt = 0,
 	RaysAngle = 0,
 	LastFrameAt = 0,
@@ -688,27 +689,60 @@ local function ReadSurfaceStyle(entry)
 	return style
 end
 
-local function PaintSurface(target, style, transparency, phase)
+local SURFACE_ROTATION = 22
+
+local function BuildPremiumSequence(color)
+	local light = color:Lerp(COLORS.Text, 0.78)
+	local sheen = color:Lerp(COLORS.Text, 0.42)
+	local mid = color:Lerp(COLORS.Text, 0.1)
+	local deep = color:Lerp(SHADE, 0.42)
+
+	return ColorSequence.new({
+		ColorSequenceKeypoint.new(0, mid),
+		ColorSequenceKeypoint.new(0.16, light),
+		ColorSequenceKeypoint.new(0.32, color),
+		ColorSequenceKeypoint.new(0.52, deep),
+		ColorSequenceKeypoint.new(0.7, color),
+		ColorSequenceKeypoint.new(0.86, sheen),
+		ColorSequenceKeypoint.new(1, mid),
+	})
+end
+
+local function BuildSparkleSequence(entry)
+	local rarity = string.upper(tostring(entry.Rarity))
+	local base = entry.RarityColor or FALLBACK_RARITY_COLOR
+	if rarity == "SECRET" then
+		base = Color3.fromRGB(216, 220, 230)
+	end
+
+	local tint = base:Lerp(COLORS.Text, 0.3)
+	local bright = base:Lerp(COLORS.Text, 0.85)
+	local deep = base:Lerp(SHADE, 0.5)
+
+	return ColorSequence.new({
+		ColorSequenceKeypoint.new(0, tint),
+		ColorSequenceKeypoint.new(0.26, tint),
+		ColorSequenceKeypoint.new(0.36, bright),
+		ColorSequenceKeypoint.new(0.46, tint),
+		ColorSequenceKeypoint.new(0.68, tint),
+		ColorSequenceKeypoint.new(0.78, deep),
+		ColorSequenceKeypoint.new(0.9, tint),
+		ColorSequenceKeypoint.new(1, tint),
+	})
+end
+
+local function PaintSurface(target, entry, transparency, phase)
+	local style = ReadSurfaceStyle(entry)
 	local gradient = target:FindFirstChild("SurfacePaint")
 	if not gradient then
 		gradient = New("UIGradient", { Name = "SurfacePaint", Parent = target })
 	end
 
-	target.BackgroundColor3 = style.Background
-
-	local source = style.Gradient
-	if source then
-		gradient.Color = source.Color
-		gradient.Enabled = source.Enabled
-		gradient.Rotation = source.Rotation
-		gradient.Offset = source.Offset
-		gradient.Transparency = transparency or source.Transparency
-	else
-		gradient.Color = ColorSequence.new(style.FallbackColor, style.FallbackColor:Lerp(COLORS.Text, 0.25))
-		gradient.Rotation = 90
-		gradient.Offset = Vector2.zero
-		gradient.Transparency = transparency or NumberSequence.new(0)
-	end
+	target.BackgroundColor3 = COLORS.Text
+	gradient.Color = BuildPremiumSequence(entry.RarityColor or style.FallbackColor)
+	gradient.Enabled = true
+	gradient.Rotation = SURFACE_ROTATION
+	gradient.Transparency = transparency or NumberSequence.new(0)
 
 	if transparency == nil and not gradient:GetAttribute("Animated") then
 		gradient:SetAttribute("Animated", true)
@@ -716,6 +750,38 @@ local function PaintSurface(target, style, transparency, phase)
 	end
 
 	return gradient
+end
+
+local function PaintSparkleText(label, entry, phase, speed)
+	local gradient = PaintGradient(label, "TextPaint", BuildSparkleSequence(entry), 0)
+	label.TextColor3 = COLORS.Text
+	if not gradient:GetAttribute("Animated") then
+		gradient:SetAttribute("Animated", true)
+		table.insert(Prediction.SparkleTexts, {
+			Gradient = gradient,
+			Phase = phase or 0,
+			Speed = speed or 1.1,
+		})
+	end
+	return gradient
+end
+
+local function AnimateSparkleTexts(now)
+	for _, sparkle in ipairs(Prediction.SparkleTexts) do
+		local gradient = sparkle.Gradient
+		if gradient and gradient.Parent then
+			gradient.Offset = Vector2.new(math.sin(now * sparkle.Speed + sparkle.Phase) * 0.55, 0)
+		end
+	end
+end
+
+local function PruneSparkleTexts()
+	for index = #Prediction.SparkleTexts, 1, -1 do
+		local gradient = Prediction.SparkleTexts[index].Gradient
+		if not gradient or not gradient.Parent then
+			table.remove(Prediction.SparkleTexts, index)
+		end
+	end
 end
 
 local function AnimateSurfaces(now)
@@ -1128,7 +1194,7 @@ local function CreateCard(parent, entry, metrics, index, theme)
 	}, {
 		New("UICorner", { CornerRadius = cornerRadius }),
 	})
-	PaintSurface(card, style, nil, index * 0.4)
+	PaintSurface(card, entry, nil, index * 0.4)
 
 	New("UIStroke", {
 		Color = COLORS.Text,
@@ -1172,7 +1238,7 @@ local function CreateCard(parent, entry, metrics, index, theme)
 		theme,
 		false
 	)
-	PaintSurface(artBox.Frame, style, NumberSequence.new(0.45, 0.9))
+	PaintSurface(artBox.Frame, entry, NumberSequence.new(0.5, 0.9))
 	artBox.Pet.Size = UDim2.fromScale(0.94, 0.94)
 	AddGloss(artBox.Frame, 7)
 
@@ -1264,8 +1330,8 @@ local function CreateCard(parent, entry, metrics, index, theme)
 		ZIndex = 4,
 	})
 	UseDisplayFont(rarityLabel)
-	PaintRarityText(rarityLabel, entry, false)
-	AddTextStroke(rarityLabel, SHADE, 1.4, 0.15)
+	PaintSparkleText(rarityLabel, entry, index * 0.45)
+	AddTextStroke(rarityLabel, SHADE, 1.5, 0.1)
 
 	local valueLabel = CreateLabel(card, {
 		Position = UDim2.fromOffset(metrics.Inset, metrics.ValueY),
@@ -1333,46 +1399,6 @@ local function CreateCard(parent, entry, metrics, index, theme)
 			mutationStack.Update(current.Mutations)
 		end,
 	}
-end
-
-local function CreateChip(parent, position, anchorX, textSize)
-	local chip = New("Frame", {
-		BackgroundColor3 = PILL_LIGHT,
-		BorderSizePixel = 0,
-		AnchorPoint = Vector2.new(anchorX, 0),
-		AutomaticSize = Enum.AutomaticSize.X,
-		Position = position,
-		Size = UDim2.new(0, 0, 0, 18),
-		ZIndex = 7,
-		Parent = parent,
-	}, {
-		New("UICorner", { CornerRadius = UDim.new(0.5, 0) }),
-		New("UIStroke", {
-			Color = DARK_INK,
-			Thickness = 1,
-			Transparency = 0.55,
-			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-		}),
-		New("UIPadding", {
-			PaddingLeft = UDim.new(0, 9),
-			PaddingRight = UDim.new(0, 9),
-		}),
-	})
-
-	local label = New("TextLabel", {
-		BackgroundTransparency = 1,
-		AutomaticSize = Enum.AutomaticSize.X,
-		Size = UDim2.new(0, 0, 1, 0),
-		Text = "",
-		TextColor3 = DARK_INK,
-		TextSize = textSize or 9,
-		TextXAlignment = Enum.TextXAlignment.Center,
-		ZIndex = 8,
-		Parent = chip,
-	})
-	UseDisplayFont(label)
-
-	return { Frame = chip, Label = label }
 end
 
 local function CreateStatPill(parent, position, size, captionText, iconId)
@@ -1541,8 +1567,46 @@ local function CreatePreview(parent, theme)
 	UseDisplayFont(nameLabel)
 	AddTextStroke(nameLabel, SHADE, 1.8, 0.15)
 
-	local rarityChip = CreateChip(frame, UDim2.new(0.5, 0, 0, 208), 0.5, 10)
-	rarityChip.Frame.Visible = false
+	local rarityChip = New("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		AutomaticSize = Enum.AutomaticSize.X,
+		BackgroundColor3 = PILL_DARK,
+		BackgroundTransparency = 0.25,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0.5, 0, 0, 208),
+		Size = UDim2.new(0, 0, 0, 20),
+		ZIndex = 7,
+		Visible = false,
+		Parent = frame,
+	}, {
+		New("UICorner", { CornerRadius = UDim.new(0.5, 0) }),
+		New("UIPadding", {
+			PaddingLeft = UDim.new(0, 11),
+			PaddingRight = UDim.new(0, 11),
+		}),
+	})
+
+	local rarityStroke = New("UIStroke", {
+		Color = COLORS.Text,
+		Thickness = 1.2,
+		Transparency = 0.25,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		Parent = rarityChip,
+	})
+
+	local rarityLabel = New("TextLabel", {
+		BackgroundTransparency = 1,
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.new(0, 0, 1, 0),
+		Text = "",
+		TextColor3 = COLORS.Text,
+		TextSize = 10,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		ZIndex = 8,
+		Parent = rarityChip,
+	})
+	UseDisplayFont(rarityLabel)
+	AddTextStroke(rarityLabel, SHADE, 1.4, 0.15)
 
 	local valueLabel = CreateLabel(frame, {
 		Position = UDim2.fromOffset(8, 230),
@@ -1641,7 +1705,7 @@ local function CreatePreview(parent, theme)
 			nameLabel.Text = "No egg"
 			nameLabel.TextColor3 = COLORS.Subtext
 			mutationStack.Update(nil)
-			rarityChip.Frame.Visible = false
+			rarityChip.Visible = false
 			valueLabel.Text = ""
 			scalePill.Value.Text = ""
 			weightPill.Value.Text = ""
@@ -1662,13 +1726,14 @@ local function CreatePreview(parent, theme)
 			artBox.Pet.Image = entry.PetIcon
 			artBox.Egg.Image = entry.EggIcon
 			artBox.BadgeStroke.Color = entry.RarityColor
-			local style = ReadSurfaceStyle(entry)
-			PaintSurface(frame, style, nil, 0)
-			PaintSurface(artBox.Frame, style, NumberSequence.new(0.42, 0.9))
+			PaintSurface(frame, entry, nil, 0)
+			PaintSurface(artBox.Frame, entry, NumberSequence.new(0.45, 0.88))
 			nameLabel.Text = entry.Name
-			PaintRarityText(nameLabel, entry, true)
-			rarityChip.Frame.Visible = true
-			rarityChip.Label.Text = string.upper(entry.Rarity)
+			PaintSparkleText(nameLabel, entry, 0.2, 0.5)
+			rarityChip.Visible = true
+			rarityLabel.Text = string.upper(entry.Rarity)
+			PaintSparkleText(rarityLabel, entry, 0.6, 1.4)
+			PaintGradient(rarityStroke, "BorderPaint", BuildSparkleSequence(entry), 0)
 		end
 
 		mutationStack.Update(entry.Mutations)
@@ -1809,6 +1874,7 @@ local function RenderList(entries)
 	ClearCards()
 	PruneShimmers()
 	PruneSurfaces()
+	PruneSparkleTexts()
 	Prediction.Grid.CellSize = UDim2.fromOffset(cellWidth, cellHeight)
 	Prediction.Grid.CellPadding = UDim2.fromOffset(GRID_GAP, GRID_GAP)
 
@@ -1966,6 +2032,7 @@ function Prediction.Build(groupbox, hooks)
 
 		AnimateShimmers(now)
 		AnimateSurfaces(now)
+		AnimateSparkleTexts(now)
 
 		local preview = Prediction.Preview
 		if preview and preview.Frame.Visible then
