@@ -302,7 +302,6 @@ local Remotes = {
 
 local SAFE_BASE_LINE_X = 552
 local SAFE_CORRIDOR_Z = -364
-local DELIVERY_DROP_CFRAME = CFrame.new(616.749, 71.667, -395.585)
 local SAFE_HOME_POSITION = Vector3.new(544.76, 71.5, -416.48)
 
 local FarmConfig = {
@@ -2587,10 +2586,6 @@ do
 		return nil
 	end
 
-	local function CarryGlideSpeed()
-		return math.clamp(Engine.AutoSpeed() * 0.6, 180, 340)
-	end
-
 	local function StandCFrame(cycle, worldPos)
 		local groundY = ProbeGroundY(cycle, worldPos.X, worldPos.Z)
 		local standY = groundY and (groundY + 3.2) or worldPos.Y
@@ -2605,34 +2600,7 @@ do
 		return StandCFrame(cycle, clampedPos)
 	end
 
-	local function GetDropDestination(cycle)
-		local safePart, clampedPos = Engine.ClampToSafeZone(cycle.Root.Position, 12)
-		if safePart and clampedPos then
-			return StandCFrame(cycle, clampedPos)
-		end
-		return GetSafeDestination(cycle)
-	end
-
-	local function SettleAt(cycle, seconds)
-		local settleUntil = os.clock() + (seconds or 0.4)
-		while IsCycleCurrent(cycle) and os.clock() < settleUntil do
-			Engine.StopVelocity()
-			if cycle.Root then
-				cycle.Root.AssemblyLinearVelocity = Vector3.zero
-				cycle.Root.AssemblyAngularVelocity = Vector3.zero
-			end
-			RunService.Heartbeat:Wait()
-		end
-	end
-
 	local function IsInSafeArea(cycle)
-		local homePart = Engine.ClampToSafeZone(safePosition, 10)
-		if homePart and InsideSafeFootprint(homePart, cycle.Root.Position, 0) then
-			return true
-		end
-		if Engine.IsInsideSafeZone(cycle.Root.Position) then
-			return true
-		end
 		local deltaVec = cycle.Root.Position - safePosition
 		return Vector2.new(deltaVec.X, deltaVec.Z).Magnitude <= 30 and math.abs(deltaVec.Y) <= 18
 	end
@@ -2939,16 +2907,15 @@ do
 		return true
 	end
 
-	local function Glide(cycle, destinationCF, shouldAbort, speedOverride)
+	local function Glide(cycle, destinationCF, shouldAbort)
 		if not IsCycleCurrent(cycle) then
 			return false
 		end
-		local glideSpeed = math.max(tonumber(speedOverride) or 5000, 40)
 		cycle.ArrivalHold = nil
 		cycle.UseHoverPad = true
 		cycle.Humanoid.AutoRotate = false
 		local glideDeadline = os.clock()
-			+ math.clamp((destinationCF.Position - cycle.Root.Position).Magnitude / glideSpeed * 1.6 + 6, 15, 120)
+			+ math.clamp((destinationCF.Position - cycle.Root.Position).Magnitude / 5000 * 1.6 + 6, 15, 120)
 
 		while IsCycleCurrent(cycle) and os.clock() < glideDeadline do
 			if shouldAbort and shouldAbort() then
@@ -2978,7 +2945,7 @@ do
 				continue
 			end
 
-			local nextPosition = currentPos + deltaVec.Unit * math.min(glideSpeed * deltaTime, deltaVec.Magnitude)
+			local nextPosition = currentPos + deltaVec.Unit * math.min(5000 * deltaTime, deltaVec.Magnitude)
 			if deltaTime >= 1 / 30 then
 				local groundY = ProbeGroundY(cycle, nextPosition.X, nextPosition.Z)
 				if groundY then
@@ -3357,31 +3324,22 @@ do
 			SetCycleStatus(cycle, "Bringing egg home")
 			cycle.DeliveryDropUid = eggUid
 
-			Glide(cycle, GetDropDestination(cycle), function()
+			local dropDestination = GetSafeDestination(cycle)
+			Glide(cycle, dropDestination, function()
 				return not IsCarriedByMe(eggUid)
-			end, CarryGlideSpeed())
-			SettleAt(cycle, 0.45)
-
-			if IsCycleCurrent(cycle) and IsCarriedByMe(eggUid) and not Engine.IsInsideSafeZone(cycle.Root.Position) then
-				SetCycleStatus(cycle, "Aligning inside the safe zone")
-				Glide(cycle, GetSafeDestination(cycle), function()
-					return not IsCarriedByMe(eggUid)
-				end, CarryGlideSpeed())
-				SettleAt(cycle, 0.3)
-			end
+			end)
 
 			local dropConfirmed = false
 			for _ = 1, 3 do
 				if not IsCycleCurrent(cycle) or not IsCarriedByMe(eggUid) then
 					break
 				end
-				Glide(cycle, GetDropDestination(cycle), function()
+				Glide(cycle, dropDestination, function()
 					return not IsCarriedByMe(eggUid)
-				end, CarryGlideSpeed())
+				end)
 				if not IsCycleCurrent(cycle) then
 					return false
 				end
-				SettleAt(cycle, 0.35)
 				if IsCarriedByMe(eggUid) then
 					task.wait(0.15)
 					if not IsCycleCurrent(cycle) then
@@ -3761,7 +3719,6 @@ do
 					Engine.RecordAutoTrace("carry-failed-return", eggUid)
 					SetCycleStatus(cycle, "Carry failed - returning to safe zone")
 					Glide(cycle, GetSafeDestination(cycle))
-					SettleAt(cycle, 0.3)
 				end
 				return
 			end
@@ -10944,7 +10901,7 @@ do
 				end
 				instantState.Status = "Bringing the stolen egg home"
 				local _, safeDropPos = Engine.ClampToSafeZone(nil, 12)
-				local dropTarget = (safeDropPos or DELIVERY_DROP_CFRAME.Position) + Vector3.new(0, 3, 0)
+				local dropTarget = (safeDropPos or SAFE_HOME_POSITION) + Vector3.new(0, 3, 0)
 				DriftToPoint(dropTarget, APPROACH_SPEED, function()
 					return not FarmConfig.Admin_InstantSteal or not Engine.AutoCarry.Carrying
 				end, 8)
