@@ -1001,6 +1001,17 @@ local function CreateCard(parent, entry, metrics, index, theme)
 		Parent = parent,
 	})
 
+	New("Frame", {
+		BackgroundColor3 = SHADE,
+		BackgroundTransparency = 0.72,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(CARD_MARGIN, CARD_MARGIN + 2),
+		Size = UDim2.fromOffset(metrics.Width, metrics.Height),
+		Parent = cell,
+	}, {
+		New("UICorner", { CornerRadius = UDim.new(0, 10) }),
+	})
+
 	local card = New("Frame", {
 		Name = "PredictorCard",
 		BackgroundColor3 = COLORS.Text,
