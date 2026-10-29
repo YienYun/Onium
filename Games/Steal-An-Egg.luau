@@ -72,6 +72,7 @@ local Hub = {
 		MinigameEggs = "rbxassetid://124390268104324",
 		Predictor = "rbxassetid://96168190157761",
 		EggPredictor = "rbxassetid://113114954725357",
+		EggFinder = "rbxassetid://116524274262912",
 	},
 	Theme = {
 		PrefixHex = "#D946EF", -- N3 HUB Purple-Pink Accent for label prefixes ("Status:", etc.)
@@ -83,6 +84,7 @@ local Hub = {
 	UI = {
 		Tabs = {},
 		Groups = {},
+		Dropdowns = {},
 	},
 }
 
@@ -151,6 +153,7 @@ end
 
 local LibraryLoader = loadstring(game:HttpGet(RepoFile("Library/OniumV4.luau")))()
 local PredictionModule = loadstring(game:HttpGet(RepoFile("Games/StealAnEgg/Prediction.luau")))()
+local EggFinderModule = loadstring(game:HttpGet(RepoFile("Games/StealAnEgg/EggFinder.luau")))()
 if not LibraryLoader then
 	return
 end
@@ -870,6 +873,15 @@ do
 		table.sort(WeaponDisplayList)
 	end
 end
+
+Hub.Catalogs = {
+	AreaNames = AreaNamesList,
+	EggNames = EggNamesList,
+	Rarities = RaritiesList,
+	MinRarityOptions = HatchMinRarityOptions,
+	RarityRankByKey = RarityRankByKey,
+	NormalizeRarityKey = NormalizeRarityKey,
+}
 
 local function ResolveEggRarity(eggRecord)
 	local categoryName = tostring(eggRecord.AssetCategory or eggRecord.Category or eggRecord.Name or "")
@@ -2032,6 +2044,32 @@ local function MatchesSelectedFilters(zoneName, categoryName, rarityName)
 		end
 	end
 	return true
+end
+
+function Engine.SurveyFieldEggs()
+	local surveyRecords = {}
+	for _, eggRecord in ipairs(Engine.CollectRawFieldEggs(false)) do
+		local categoryName = tostring(eggRecord.AssetCategory or eggRecord.Category or eggRecord.Name or "")
+		if eggRecord.Uid ~= nil and categoryName ~= "" then
+			local referenceCFrame = eggRecord.BoundsCFrame or eggRecord.BottomCFrame
+			local referencePosition = typeof(referenceCFrame) == "CFrame" and referenceCFrame.Position or nil
+			local rarityName, rarityRank = ResolveEggRarity(eggRecord)
+			table.insert(surveyRecords, {
+				Uid = tostring(eggRecord.Uid),
+				Category = categoryName,
+				Zone = ResolveEggZone(eggRecord.AreaId, referencePosition, categoryName),
+				Rarity = tostring(rarityName or "Common"),
+				Rank = ToFiniteNumber(rarityRank, 0),
+				State = tostring(eggRecord.State or ""),
+				Income = CalculateEggIncome(eggRecord),
+			})
+		end
+	end
+	return surveyRecords
+end
+
+function Engine.MatchesStealFilters(zoneName, categoryName, rarityName)
+	return MatchesSelectedFilters(zoneName, categoryName, rarityName)
 end
 
 function Engine.CollectCandidates(includeCarried, isNormalMode)
@@ -12962,7 +13000,7 @@ function Hub.Features.BuildFarmEggs(farmGroup)
 		end,
 	})
 
-	farmGroup:AddDropdown("Dropdown_TargetRarity", {
+	local targetRarityDropdown = farmGroup:AddDropdown("Dropdown_TargetRarity", {
 		Text = "Rarity",
 		Values = RaritiesList,
 		Multi = true,
@@ -12971,6 +13009,10 @@ function Hub.Features.BuildFarmEggs(farmGroup)
 			ApplySelectionTable(FarmConfig.SelectedRarities, selectedValues)
 		end,
 	})
+
+	Hub.UI.Dropdowns.FarmZones = targetZoneDropdown
+	Hub.UI.Dropdowns.FarmEggs = targetEggDropdown
+	Hub.UI.Dropdowns.FarmRarities = targetRarityDropdown
 
 	farmGroup:AddDropdown("Dropdown_StealPriority", {
 		Text = "Steal Priority",
@@ -14894,6 +14936,7 @@ Hub.UI.Tabs.Settings = SettingsTab
 
 local FarmEggGroup = FarmTab:AddLeftGroupbox("Farm Eggs", Hub.Icons.Farm)
 local ProgressionGroup = FarmTab:AddRightGroupbox("Progression", Hub.Icons.Progression)
+local EggFinderGroup = FarmTab:AddRightGroupbox("Egg Finder", Hub.Icons.EggFinder)
 local AutoPlaceGroup = PetsTab:AddLeftGroupbox("Auto Place Egg", Hub.Icons.Place)
 local AutoMutateGroup = PetsTab:AddLeftGroupbox("Auto Mutation", Hub.Icons.Mutate)
 local AutoFuseGroup = PetsTab:AddLeftGroupbox("Auto Fuse", Hub.Icons.Fuse)
@@ -14921,6 +14964,7 @@ local FusePredictorGroup = PredictorTab:AddRightGroupbox("Fuse Predictor", Hub.I
 
 Hub.UI.Groups.FarmEggs = FarmEggGroup
 Hub.UI.Groups.Progression = ProgressionGroup
+Hub.UI.Groups.EggFinder = EggFinderGroup
 Hub.UI.Groups.AutoPlaceEgg = AutoPlaceGroup
 Hub.UI.Groups.AutoMutation = AutoMutateGroup
 Hub.UI.Groups.AutoFuse = AutoFuseGroup
@@ -15006,6 +15050,13 @@ if ServerManager then
 	ServerManager:SetAutoLoadSource(RepoFile("Games/Steal-An-Egg.luau"))
 	ServerManager:ApplyToTab(SettingsTab)
 	Hub.ServerManager = ServerManager
+	Hub.ServerHop = function(hopMode)
+		return ServerManager:Hop(hopMode)
+	end
+end
+if type(EggFinderModule) == "table" then
+	Hub.EggFinder = EggFinderModule
+	EggFinderModule.Build(EggFinderGroup)
 end
 if SaveManager and ThemeManager then
 	SaveManager:SetLibrary(LibraryLoader)
@@ -15081,6 +15132,7 @@ LibraryLoader:OnUnload(function()
 	pcall(Hub.GhostDogFishing.Restart)
 	pcall(Hub.IslandWars.RestoreKnock)
 	pcall(PredictionModule.Stop)
+	pcall(EggFinderModule.Stop)
 	pcall(Hub.HalloweenMonsters.SetAutoEnabled, false)
 	pcall(Hub.AutoMutate.SetAutoEnabled, false)
 	pcall(Engine.StopSafeZoneVisual)

@@ -379,8 +379,11 @@ end
 -- 4. SERVER HOP
 -- ============================================================================
 
-local function HopOnce()
-	local mode = ServerManager.Config.HopMode
+local function HopOnce(modeOverride)
+	local mode = type(modeOverride) == "string" and modeOverride or ServerManager.Config.HopMode
+	if not table.find(HOP_MODES, mode) then
+		mode = ServerManager.Config.HopMode
+	end
 	local servers = GetServerList(mode)
 	if not servers then
 		return "fetch"
@@ -863,6 +866,18 @@ function ServerManager:BuildServerSection(targetTab, useRightSide)
 	WatchDisconnectPrompts()
 
 	return serverGroup
+end
+
+function ServerManager:Hop(hopMode)
+	if not IsAlive() or ServerState.HopBusy then
+		return "busy"
+	end
+	if not IsAutoLoadEnabled() then
+		ApplyAutoLoadSetting(true)
+		QueueAutoLoadScript()
+	end
+	ServerState.HopTarget = nil
+	return HopOnce(hopMode)
 end
 
 function ServerManager:ApplyToTab(targetTab)

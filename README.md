@@ -12,6 +12,7 @@ Tujuan repo: satu sumber kebenaran yang rapi, mudah dibaca, mudah dimaintain, da
 | --- | --- | --- |
 | `Games/Steal-An-Egg.luau` | Hub utama game (single file, ±15.100 baris) | Kode produksi. Semua fitur, engine, dan UI hub ada di sini. |
 | `Games/StealAnEgg/Prediction.luau` | Modul tab Predictor (±2890 baris) | Modul terpisah: baca egg, format uang/berat/waktu, gradient rarity, kartu preview besar, tombol status, grid kartu egg, fuse predictor, dan Discord webhook. Dimuat hub lewat URL. |
+| `Games/StealAnEgg/EggFinder.luau` | Modul group `Egg Finder` (±840 baris) | Modul terpisah: sembilan kontrol hop, survey field per server, dan loop auto hop. Dimuat hub lewat URL. |
 | `Library/OniumV4.luau` | UI library hub (turunan Obsidian, ±17.800 baris) | Komponen window, tab, groupbox, dan element. |
 | `Manager/` | `FpsManger.luau`, `SaveManager.luau`, `ThemeManger.luau`, `ServerManger.luau` | Manager UI (performance, config, theme, server). Dimuat hub lewat URL, bukan dari sini. |
 | `Source/ChiliHub.luau` | Source hasil deobfuscate (Chili Hub V3, ±53.000 baris) | **Referensi baca saja.** Bukan bahan copy-paste. |
@@ -100,7 +101,7 @@ Untuk debug di executor, state yang sama juga tersedia di `getgenv().N3Hub_State
 
 | Tab | Groupbox |
 | --- | --- |
-| Farm | Kiri: Farm Eggs — Kanan: Progression |
+| Farm | Kiri: Farm Eggs — Kanan: Progression, Egg Finder |
 | Pets | Kiri: Auto Place Egg, Auto Mutation, Auto Fuse — Kanan: Auto Hatch & Equip, Auto Sell, Favorite |
 | Event | Kiri: Pumpkin Boss, Ghost Dog & Fishing, The Hollow — Kanan: Phantom Express, Halloween Monsters |
 | Admin | Kiri: Capture The Egg, Instant Steal Abuse, Cursed Island Wars — Kanan: Admin Treadmill, Minigame Eggs |
@@ -143,6 +144,32 @@ Catatan implementasi:
 - Fase `Prep` hanya dipakai untuk klaim movement (`islandwars`); serangan baru jalan setelah fase berganti ke `Match`/`SuddenDeath`.
 - `Knock` milik modul `CursedIslandWars/Input` dinonaktifkan selama auto play supaya knock dari lawan tidak membuat karakter ragdoll, lalu dipulihkan saat toggle dimatikan, event selesai, atau script di-unload.
 - Icon group memakai `Hub.Icons.Fights` (id stat Fights milik game) karena dex tidak menyimpan icon khusus Cursed Island Wars.
+
+### Group Egg Finder (tab Farm)
+
+Group `Egg Finder` ada di kolom kanan tab `Farm`, di bawah `Progression`. Semua logikanya di modul terpisah `Games/StealAnEgg/EggFinder.luau`; hub hanya membuat groupbox, menyimpan referensi dropdown Auto Steal, dan memasang `Hub.ServerHop` ke `ServerManager:Hop`.
+
+| # | Kontrol | Tipe | Logika |
+| --- | --- | --- | --- |
+| 1 | Hop Mode | Dropdown | `Until An Egg Matches` / `Steal Then Hop` (default) / `After A Rare Spawns` |
+| 2 | Rarity To Wait For | Dropdown | rarity minimum untuk mode `After A Rare Spawns`, default `Cosmic` |
+| 3 | Min Rarity | Dropdown | egg dengan rarity ini atau lebih tinggi dianggap cocok |
+| 4 | Target Areas | Multi dropdown | area yang dicari (kosong = semua area) |
+| 5 | Target Specific Eggs | Multi dropdown | hanya egg ini (kosong = semua egg) |
+| 6 | Min Value To Find | Slider | batas income egg dalam juta per detik, 0 = mati |
+| 7 | First Hop Delay | Slider | 3–10 detik (langkah 0,5), jeda sebelum hop pertama |
+| 8 | Auto Hop | Toggle | menyalakan loop survey + hop |
+| 9 | Sync With Auto Steal Filter | Toggle | dua arah antara filter di sini dan `Zone`/`Egg`/`Rarity` Auto Steal |
+
+Perilaku yang perlu diingat:
+
+- **Sumber data survey** adalah `Engine.SurveyFieldEggs()` (record `Slot`/`Dropped`/`Carried` dari `EggState`, lengkap dengan zona, rarity, dan income) plus `Engine.AutoCarry` untuk tahu egg yang sedang dibawa sendiri. `Engine.MatchesStealFilters` dipakai untuk menghitung egg yang juga cocok filter Auto Steal.
+- **Urutan keputusan** mengikuti Chili: Auto Steal sibuk atau egg cocok sedang dibawa → tunggu; egg cocok milik Auto Steal ada di field → ambil dulu; egg cocok bebas → diam di server; egg cocok sedang dibawa pemain lain → tunggu 12 detik; malam < 20 detik → diam; lalu perilaku per mode.
+- **Mode 2 dan 3 memakai jendela hop** sampai `AreaEggCycle.NextNightTime`: setelah Auto Steal berhasil membawa pulang egg (`Engine.AutoDeliverySerial`) atau setelah rare spawn (`Rarity To Wait For`), hop berhenti sampai night berikutnya.
+- **Sebelum teleport** field dibaca ulang; kalau ada egg cocok atau Auto Steal mulai bekerja, hop dibatalkan. Hop memakai `Least Players` lewat `Hub.ServerHop` → `ServerManager:Hop`, dan manager meng-queue script sekali jalan supaya hub kembali hidup di server baru walau toggle `Auto Load Script` tetap OFF.
+- **Night atau wall tertutup** (`Engine.IsNight` / `Engine.WallSealed`) menghentikan hop sampai area reset.
+- **Sync tidak menyentuh `Min Value To Find`.** Filter Auto Steal di Onium hanya zona, egg, dan rarity, jadi nilai minimum tetap milik Egg Finder. Karena dropdown rarity Onium multi-pilih sedangkan Egg Finder memakai satu batas minimum, sync rarity memakai rank terendah saat menarik dan menulis satu rarity saat mendorong (sama seperti perilaku Chili).
+- **Icon group** memakai `Hub.Icons.EggFinder` (`rbxassetid://116524274262912`, base egg milik game) karena dex tidak menyimpan icon khusus "finder". Elemen OniumV4 (dropdown/slider/toggle) tidak punya slot icon per kontrol; icon hanya ada di level tab dan groupbox.
 
 ### Tab Predictor
 
@@ -302,6 +329,9 @@ Satu groupbox `Server` di tab Settings, urutan kontrol:
 | 6 | Copy Current Job ID | Button | `game.JobId` ke input + clipboard |
 | 7 | Rejoin Server | Button | teleport balik ke server yang sekarang |
 | 8 | Auto Rejoin When Disconnect | Toggle | `RobloxPromptGui.promptOverlay` + `ErrorMessage` |
+
+API publik manager: `BuildServerSection`, `ApplyToTab`, `Unload`, `SetLibrary`, `SetIcon`, `SetAutoLoadSource`, dan `Hop(mode)`.
+
 
 Perilaku yang perlu diingat:
 
