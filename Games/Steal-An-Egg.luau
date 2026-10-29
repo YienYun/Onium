@@ -2500,28 +2500,12 @@ do
 	end
 
 	local DROP_GAP = 12
-	local DROP_ALIGN = 14
 
 	local function GetDropPoint(cycle)
 		local dropX = Engine.GetSeparationX() + DROP_GAP
 		local groundY = ProbeGroundY(cycle, dropX, safePosition.Z)
 		local standY = groundY and (groundY + 3.2) or deliveryDrop.Position.Y
 		return CFrame.new(dropX, standY, safePosition.Z) * cycle.Root.CFrame.Rotation
-	end
-
-	local function WaitCarrySynced(cycle, eggUid)
-		local syncDeadline = os.clock() + 0.8
-		while IsCycleCurrent(cycle) and os.clock() < syncDeadline do
-			cycle.Root.AssemblyLinearVelocity = Vector3.zero
-			cycle.Root.AssemblyAngularVelocity = Vector3.zero
-			local eggRecord = ReadEgg(eggUid)
-			local eggCF = eggRecord and (eggRecord.BottomCFrame or eggRecord.BoundsCFrame)
-			if eggCF and (eggCF.Position - cycle.Root.Position).Magnitude <= DROP_ALIGN then
-				return true
-			end
-			task.wait(0.06)
-		end
-		return IsCycleCurrent(cycle)
 	end
 
 	local function IsInSafeArea(cycle)
@@ -3234,6 +3218,43 @@ do
 		return wornConfirmed and leftConfirmed
 	end
 
+	local CARRY_LEG_COUNT = 5
+	local CARRY_LEG_MIN_DISTANCE = 40
+
+	local function DropAndRegrab(cycle, eggUid, destinationCF)
+		Glide(cycle, destinationCF, function()
+			return not IsCarriedByMe(eggUid)
+		end)
+		if not IsCycleCurrent(cycle) or not IsCarriedByMe(eggUid) then
+			return false
+		end
+
+		if EggStateModule and type(EggStateModule.DropFieldEgg) == "function" then
+			pcall(EggStateModule.DropFieldEgg, "PlayerRequest")
+		end
+
+		local dropDeadline = os.clock() + 1
+		while IsCycleCurrent(cycle) and os.clock() < dropDeadline and IsCarriedByMe(eggUid) do
+			task.wait(0.03)
+		end
+		if not IsCycleCurrent(cycle) or IsCarriedByMe(eggUid) then
+			return false
+		end
+
+		local eggRecord = ReadEgg(eggUid)
+		local bottomCF = eggRecord and (eggRecord.BottomCFrame or eggRecord.BoundsCFrame)
+		if bottomCF then
+			Glide(cycle, CFrame.new(bottomCF.Position + Vector3.new(0, 3.2, 0)), function()
+				return IsCarriedByMe(eggUid)
+			end)
+		end
+		if not IsCycleCurrent(cycle) then
+			return false
+		end
+
+		return RegrabBurst(cycle, eggUid, 0.5)
+	end
+
 	local function DeliverSenaEgg(cycle, eggUid)
 		cycle.ArrivalHold = nil
 		local carryWaitDeadline = os.clock() + 2.5
@@ -3248,6 +3269,17 @@ do
 			SetCycleStatus(cycle, "Bringing egg home")
 			cycle.DeliveryDropUid = eggUid
 			local dropTarget = GetDropPoint(cycle)
+
+			local carryOrigin = cycle.Root.Position
+			if (carryOrigin - dropTarget.Position).Magnitude > CARRY_LEG_MIN_DISTANCE then
+				for leg = 1, CARRY_LEG_COUNT - 1 do
+					local legPos = carryOrigin:Lerp(dropTarget.Position, leg / CARRY_LEG_COUNT)
+					if not DropAndRegrab(cycle, eggUid, CFrame.new(legPos) * cycle.Root.CFrame.Rotation) then
+						break
+					end
+				end
+			end
+
 			Glide(cycle, dropTarget, function()
 				return not IsCarriedByMe(eggUid)
 			end)
@@ -3265,10 +3297,6 @@ do
 				end
 				if IsCarriedByMe(eggUid) then
 					task.wait(0.15)
-					if not IsCycleCurrent(cycle) then
-						return false
-					end
-					WaitCarrySynced(cycle, eggUid)
 					if not IsCycleCurrent(cycle) then
 						return false
 					end
