@@ -176,8 +176,9 @@ Perilaku yang perlu diingat:
 Library aslinya hanya punya dua kolom: `AddLeftGroupbox` dan `AddRightGroupbox` (masing-masing 50% lebar tab). `AddFullGroupbox` menambahkan area ketiga, `TabFull`, yang berada di atas kedua kolom dengan lebar penuh:
 
 - `TabFull` hanya dibuat saat sebuah tab memakai `AddFullGroupbox` pertama kali, jadi tab lain tidak berubah sama sekali.
-- Tinggi `TabFull` mengikuti isinya (`AutomaticCanvasSize`) dan dibatasi supaya dua kolom di bawahnya tetap minimal 130 px; kalau isinya lebih tinggi dari batas itu, area atas bisa digulir sendiri.
-- `Tab:RefreshSides()` menghitung ulang posisi dua kolom setiap kali tinggi area penuh berubah, ukuran tab berubah, atau warning box muncul/tertutup. Tidak ada perubahan pada tab yang tidak memakai groupbox lebar.
+- `TabFull` adalah satu-satunya ScrollingFrame di tab tersebut (`Size = 1, 1` dikurangi tinggi warning box), jadi seluruh isi tab digulir bersama: groupbox lebar, kolom kiri, dan kolom kanan. Tidak ada lagi scroll per kolom yang saling menutupi.
+- Dua kolom lama (`TabLeft`/`TabRight`) dipindahkan ke dalam satu baris di bawah groupbox lebar, ukurannya mengikuti isi (`AutomaticSize.Y`), sehingga groupbox yang di-collapse langsung menaikkan groupbox di bawahnya.
+- `Tab:RefreshSides()` hanya memperbarui posisi/ukuran area penuh (offset warning box). Tidak ada perubahan pada tab yang tidak memakai groupbox lebar.
 
 ### Tab Predictor
 
@@ -195,13 +196,18 @@ Sumber data semuanya dari modul game, bukan karangan: `EggState.ReadOwnerEggs` (
 
 Layout tab (sejak groupbox lebar tersedia):
 
-- `Egg Predictor` memakai `AddFullGroupbox` dan berada paling atas, isinya dua kolom: preview besar di kiri (298 px) dan daftar kartu egg di kanan.
+- `Egg Predictor` memakai `AddFullGroupbox` dan berada paling atas, isinya dua kolom: kartu preview besar di kiri dan daftar kartu egg di kanan.
+- Lebar preview mengikuti lebar tab (`32%`, dibatasi 208-252 px), daftar kanan selalu 4 kolom.
 - Di bawahnya tetap seperti sebelumnya: `Discord Webhook` di kolom kiri (default collapsed) dan `Fuse Predictor` di kolom kanan.
 - Tombol `Show Preview Card` menyembunyikan preview dan membuat daftar memakai lebar penuh.
+- Tombol `Go to egg` di kartu preview memanggil `Engine.FlyToPosition` ke posisi egg (`CollectRawFieldEggs` + `BoundsCFrame`); hub mengirimkannya lewat parameter kedua `Prediction.Build(groupbox, { OnGoToEgg = ... })` dan tombol tidak dibuat kalau hook tidak ada.
 
 Catatan tampilan:
 
-- Preview besar berbentuk kartu vertikal: art pet + badge egg bundar, chip `RANK n` di kiri atas, teks mutasi di kanan atas, nama (gradient rarity), pill rarity, nilai income besar, baris `size`/`weight`, dan bar status. Daftar di kanan memakai kartu kecil yang sama seperti versi sebelumnya.
+- Latar kartu (preview maupun kartu list) memakai gradient rarity game yang dicerahkan (`BuildArtSequence`), meniru tampilan Chili: kartu DIVINE jadi emas, kartu gelap tetap gelap.
+- Warna teks dihitung dari luminance gradient (`ReadSurfaceInk`): kartu terang memakai tinta cokelat gelap, kartu gelap memakai putih, supaya kontras selalu terbaca.
+- Kartu preview: art pet + glow, badge egg bundar, chip `RANK n` kiri atas, mutasi bertumpuk di kanan atas, nama, pill rarity, income besar, dua pill `SIZE`/`WEIGHT`, bar status, dan tombol `Go to egg`.
+- Kartu list: chip `#n`, art + mutasi bertumpuk, baris waktu tersisa + `x` scale, nama, rarity, dan income.
 - Gambar dan teks kartu dibuat manual di modul (bukan `AddImage`/`AddSpotlightCard` bawaan library), karena kartu memerlukan art persegi, bar berisi waktu, dan teks yang bisa diberi gradient per label. Hanya kontrol `Sort By` dan `Show Preview Card` yang memakai element library.
 - Warna teks mengikuti palette Chili: income `#4DFF7A`, skala `#FFDF8A`, berat `#CDE7FF`, status Ready `#4DFF7A`, Growing `#FFC24D`, In Bag `#7FD8FF`.
 - Gradient nama dan rarity diambil dari instance game `ReplicatedStorage.Assets.UI.RarityGradients/<rarityId>/RarityGradient` (rotation + color sequence di-crop seperti Chili), dengan `SECRET` memakai sequence khusus dan fallback `Color:Lerp(white, 0.35)` bila gradient tidak tersedia.

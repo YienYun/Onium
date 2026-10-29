@@ -15015,7 +15015,28 @@ Hub.Features.BuildPlayerESP(PlayerEspGroup)
 Hub.Features.BuildPlayerMovement(PlayerMoveGroup)
 Hub.Features.BuildPlayerCharacter(PlayerCharGroup)
 PredictionModule.BuildWebhook(DiscordWebhookGroup)
-PredictionModule.Build(EggPredictorGroup)
+PredictionModule.Build(EggPredictorGroup, {
+	OnGoToEgg = function(entry)
+		local targetRecord = nil
+		for _, fieldEgg in ipairs(Engine.CollectRawFieldEggs(true)) do
+			if fieldEgg.Uid == entry.Id then
+				targetRecord = fieldEgg
+				break
+			end
+		end
+		if not targetRecord or not targetRecord.BoundsCFrame then
+			return
+		end
+		Engine.FlyToPosition(
+			targetRecord.BoundsCFrame.Position + Vector3.new(0, 3, 0),
+			RuntimeState.SessionId,
+			4,
+			30,
+			500,
+			true
+		)
+	end,
+})
 PredictionModule.BuildFuse(FusePredictorGroup)
 
 -- Character Respawn & Anti-Ragdoll Guard Loop
