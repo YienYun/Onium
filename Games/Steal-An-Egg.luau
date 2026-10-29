@@ -14958,9 +14958,9 @@ local ShootingStarGroup = QuestTab:AddRightGroupbox("Shooting Star", Hub.Icons.S
 local PlayerEspGroup = PlayerTab:AddLeftGroupbox("ESP", Hub.Icons.ESP)
 local PlayerMoveGroup = PlayerTab:AddRightGroupbox("Movement", Hub.Icons.Movement)
 local PlayerCharGroup = PlayerTab:AddRightGroupbox("Character", Hub.Icons.Character)
+local DiscordWebhookGroup = PredictorTab:AddFullGroupbox("Discord Webhook", Hub.Icons.Predictor, true, true)
 local EggPredictorGroup = PredictorTab:AddFullGroupbox("Egg Predictor", Hub.Icons.EggPredictor)
-local DiscordWebhookGroup = PredictorTab:AddLeftGroupbox("Discord Webhook", Hub.Icons.Predictor, true, true)
-local FusePredictorGroup = PredictorTab:AddRightGroupbox("Fuse Predictor", Hub.Icons.Fuse)
+local FusePredictorGroup = PredictorTab:AddFullGroupbox("Fuse Predictor", Hub.Icons.Fuse)
 
 Hub.UI.Groups.FarmEggs = FarmEggGroup
 Hub.UI.Groups.Progression = ProgressionGroup

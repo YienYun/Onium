@@ -196,9 +196,9 @@ Sumber data semuanya dari modul game, bukan karangan: `EggState.ReadOwnerEggs` (
 
 Layout tab (sejak groupbox lebar tersedia):
 
-- `Egg Predictor` memakai `AddFullGroupbox` dan berada paling atas, isinya dua kolom: kartu preview besar di kiri dan daftar kartu egg di kanan.
+- Tab Predictor memakai tiga groupbox lebar berurutan: `Discord Webhook` (default collapsed, paling atas), `Egg Predictor`, lalu `Fuse Predictor`.
+- `Egg Predictor` isinya dua kolom: kartu preview besar di kiri dan daftar kartu egg di kanan.
 - Lebar preview mengikuti lebar tab (`32%`, dibatasi 208-252 px), daftar kanan selalu 4 kolom.
-- Di bawahnya tetap seperti sebelumnya: `Discord Webhook` di kolom kiri (default collapsed) dan `Fuse Predictor` di kolom kanan.
 - Tombol `Show Preview Card` menyembunyikan preview dan membuat daftar memakai lebar penuh.
 - Tombol `Go to egg` di kartu preview memanggil `Engine.FlyToPosition` ke posisi egg (`CollectRawFieldEggs` + `BoundsCFrame`); hub mengirimkannya lewat parameter kedua `Prediction.Build(groupbox, { OnGoToEgg = ... })` dan tombol tidak dibuat kalau hook tidak ada.
 
