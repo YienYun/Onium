@@ -55,6 +55,7 @@ local Prediction = {
 	ListColumn = nil,
 	Hooks = nil,
 	Icons = nil,
+	Surfaces = {},
 	NextRefreshAt = 0,
 	RaysAngle = 0,
 	LastFrameAt = 0,
@@ -409,6 +410,7 @@ local function ReadEntries()
 				Id = tostring(eggKey),
 				Category = tostring(eggData.AssetCategory or ""),
 				Name = assetInfo and assetInfo.Name or tostring(eggData.AssetCategory or "Egg"),
+				RarityId = assetInfo and assetInfo.RarityId or "Common",
 				Rarity = assetInfo and assetInfo.Rarity or "Common",
 				RarityRank = assetInfo and assetInfo.RarityRank or 0,
 				RarityColor = assetInfo and assetInfo.RarityColor or FALLBACK_RARITY_COLOR,
@@ -632,6 +634,108 @@ local function PruneShimmers()
 	end
 end
 
+local SURFACE_CACHE = {}
+
+local function ReadSurfaceStyle(entry)
+	local rarityId = tostring(entry.RarityId or entry.Rarity or "Common")
+	local cached = SURFACE_CACHE[rarityId]
+	if cached then
+		return cached
+	end
+
+	local style = {
+		Gradient = entry.Gradient,
+		FallbackColor = entry.RarityColor or FALLBACK_RARITY_COLOR,
+		Background = COLORS.Text,
+		Corner = UDim.new(0, 10),
+		StrokeColor = nil,
+		StrokeThickness = nil,
+		StrokeTransparency = nil,
+		StrokeGradient = nil,
+	}
+
+	if rarityGradientsFolder == nil then
+		ReadRarityGradient(rarityId)
+	end
+	local folder = rarityGradientsFolder and rarityGradientsFolder:FindFirstChild(rarityId)
+	if folder then
+		local gradient = folder:FindFirstChild("RarityGradient")
+		if gradient and gradient:IsA("UIGradient") then
+			style.Gradient = gradient
+		end
+
+		local template = folder:FindFirstChild("ItemTemplate")
+		if template and template:IsA("GuiObject") then
+			style.Background = template.BackgroundColor3
+			local corner = template:FindFirstChildOfClass("UICorner")
+			if corner then
+				style.Corner = corner.CornerRadius
+			end
+			local stroke = template:FindFirstChildOfClass("UIStroke")
+			if stroke then
+				style.StrokeColor = stroke.Color
+				style.StrokeThickness = stroke.Thickness
+				style.StrokeTransparency = stroke.Transparency
+				local strokeGradient = stroke:FindFirstChildOfClass("UIGradient")
+				if strokeGradient then
+					style.StrokeGradient = strokeGradient
+				end
+			end
+		end
+	end
+
+	SURFACE_CACHE[rarityId] = style
+	return style
+end
+
+local function PaintSurface(target, style, transparency, phase)
+	local gradient = target:FindFirstChild("SurfacePaint")
+	if not gradient then
+		gradient = New("UIGradient", { Name = "SurfacePaint", Parent = target })
+	end
+
+	target.BackgroundColor3 = style.Background
+
+	local source = style.Gradient
+	if source then
+		gradient.Color = source.Color
+		gradient.Enabled = source.Enabled
+		gradient.Rotation = source.Rotation
+		gradient.Offset = source.Offset
+		gradient.Transparency = transparency or source.Transparency
+	else
+		gradient.Color = ColorSequence.new(style.FallbackColor, style.FallbackColor:Lerp(COLORS.Text, 0.25))
+		gradient.Rotation = 90
+		gradient.Offset = Vector2.zero
+		gradient.Transparency = transparency or NumberSequence.new(0)
+	end
+
+	if transparency == nil and not gradient:GetAttribute("Animated") then
+		gradient:SetAttribute("Animated", true)
+		table.insert(Prediction.Surfaces, { Gradient = gradient, Phase = phase or 0 })
+	end
+
+	return gradient
+end
+
+local function AnimateSurfaces(now)
+	for _, surface in ipairs(Prediction.Surfaces) do
+		local gradient = surface.Gradient
+		if gradient and gradient.Parent then
+			gradient.Offset = Vector2.new(math.cos(now * 0.45 + surface.Phase) * 0.32, 0)
+		end
+	end
+end
+
+local function PruneSurfaces()
+	for index = #Prediction.Surfaces, 1, -1 do
+		local gradient = Prediction.Surfaces[index].Gradient
+		if not gradient or not gradient.Parent then
+			table.remove(Prediction.Surfaces, index)
+		end
+	end
+end
+
 local function StatusText(entry)
 	if not entry then
 		return ""
@@ -842,8 +946,6 @@ local function CreateArtBox(parent, entry, position, size, badgeSize, theme, sho
 		})
 	end
 
-	PaintGradient(art, "RarityPaint", BuildArtSequence(entry), 90)
-
 	return {
 		Frame = art,
 		Pet = petImage,
@@ -1012,6 +1114,10 @@ local function CreateCard(parent, entry, metrics, index, theme)
 		New("UICorner", { CornerRadius = UDim.new(0, 10) }),
 	})
 
+	local style = ReadSurfaceStyle(entry)
+	local cornerRadius = style.Corner.Scale > 0 and UDim.new(0, 10)
+		or UDim.new(0, math.clamp(style.Corner.Offset, 4, 16))
+
 	local card = New("Frame", {
 		Name = "PredictorCard",
 		BackgroundColor3 = COLORS.Text,
@@ -1020,9 +1126,9 @@ local function CreateCard(parent, entry, metrics, index, theme)
 		Size = UDim2.fromOffset(metrics.Width, metrics.Height),
 		Parent = cell,
 	}, {
-		New("UICorner", { CornerRadius = UDim.new(0, 10) }),
+		New("UICorner", { CornerRadius = cornerRadius }),
 	})
-	PaintGradient(card, "RarityPaint", BuildArtSequence(entry), 90)
+	PaintSurface(card, style, nil, index * 0.4)
 
 	New("UIStroke", {
 		Color = COLORS.Text,
@@ -1033,12 +1139,20 @@ local function CreateCard(parent, entry, metrics, index, theme)
 	})
 
 	local baseStroke = New("UIStroke", {
-		Color = SHADE,
-		Thickness = 1.2,
-		Transparency = 0.55,
+		Color = style.StrokeColor or SHADE,
+		Thickness = math.clamp(style.StrokeThickness or 1.2, 0.5, 3),
+		Transparency = 0.35,
 		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
 		Parent = card,
 	})
+
+	if style.StrokeGradient then
+		local borderGradient = New("UIGradient", { Parent = baseStroke })
+		borderGradient.Color = style.StrokeGradient.Color
+		borderGradient.Rotation = style.StrokeGradient.Rotation
+		borderGradient.Transparency = style.StrokeGradient.Transparency
+		borderGradient.Offset = style.StrokeGradient.Offset
+	end
 
 	local shimmerStroke = New("UIStroke", {
 		Color = COLORS.Text,
@@ -1058,7 +1172,7 @@ local function CreateCard(parent, entry, metrics, index, theme)
 		theme,
 		false
 	)
-	PaintGradient(artBox.Frame, "RarityPaint", BuildArtSequence(entry), 90).Transparency = NumberSequence.new(0.5, 0.92)
+	PaintSurface(artBox.Frame, style, NumberSequence.new(0.45, 0.9))
 	artBox.Pet.Size = UDim2.fromScale(0.94, 0.94)
 	AddGloss(artBox.Frame, 7)
 
@@ -1135,11 +1249,11 @@ local function CreateCard(parent, entry, metrics, index, theme)
 		TextSize = metrics.NameSize,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		TextTruncate = Enum.TextTruncate.AtEnd,
-		TextColor3 = COLORS.Text,
 		ZIndex = 4,
 	})
 	UseDisplayFont(nameLabel)
-	AddTextStroke(nameLabel, SHADE, 1.6, 0.15)
+	PaintRarityText(nameLabel, entry, true)
+	AddTextStroke(nameLabel, SHADE, 1.8, 0.1)
 
 	local rarityLabel = CreateLabel(card, {
 		Position = UDim2.fromOffset(metrics.Inset, metrics.RarityY),
@@ -1325,14 +1439,14 @@ local function CreatePreview(parent, theme)
 
 	local frame = New("Frame", {
 		Name = "PredictorPreview",
-		BackgroundColor3 = COLORS.Text,
+		BackgroundColor3 = theme.Surface,
 		BorderSizePixel = 0,
 		Size = UDim2.fromOffset(HERO_MIN_WIDTH, HERO_HEIGHT),
 		Parent = parent,
 	}, {
 		New("UICorner", { CornerRadius = UDim.new(0, 16) }),
 	})
-	PaintGradient(frame, "CardPaint", ColorSequence.new(theme.Surface, COLORS.ShadowTint), 90)
+	PaintGradient(frame, "SurfacePaint", ColorSequence.new(theme.Surface, COLORS.ShadowTint), 90)
 
 	New("UIStroke", {
 		Color = COLORS.Text,
@@ -1361,7 +1475,7 @@ local function CreatePreview(parent, theme)
 		theme,
 		true
 	)
-	PaintGradient(artBox.Frame, "RarityPaint", ColorSequence.new(theme.Surface, theme.Surface), 90)
+	PaintGradient(artBox.Frame, "SurfacePaint", ColorSequence.new(theme.Surface, theme.Surface), 90)
 	artBox.Pet.Image = ""
 	artBox.Egg.Image = ""
 	artBox.Pet.Size = UDim2.fromScale(0.96, 0.96)
@@ -1533,8 +1647,8 @@ local function CreatePreview(parent, theme)
 			weightPill.Value.Text = ""
 			artBox.Pet.Image = ""
 			artBox.Egg.Image = ""
-			PaintGradient(frame, "CardPaint", ColorSequence.new(theme.Surface, COLORS.ShadowTint), 90)
-			PaintGradient(artBox.Frame, "RarityPaint", ColorSequence.new(theme.Surface, theme.Surface), 90)
+			PaintGradient(frame, "SurfacePaint", ColorSequence.new(theme.Surface, COLORS.ShadowTint), 90)
+			PaintGradient(artBox.Frame, "SurfacePaint", ColorSequence.new(theme.Surface, theme.Surface), 90)
 			ApplyStatusFill(bar, nil)
 			return
 		end
@@ -1548,11 +1662,11 @@ local function CreatePreview(parent, theme)
 			artBox.Pet.Image = entry.PetIcon
 			artBox.Egg.Image = entry.EggIcon
 			artBox.BadgeStroke.Color = entry.RarityColor
-			PaintGradient(artBox.Frame, "RarityPaint", BuildArtSequence(entry), 90).Transparency =
-				NumberSequence.new(0.42, 0.9)
-			PaintGradient(frame, "CardPaint", BuildArtSequence(entry), 90)
+			local style = ReadSurfaceStyle(entry)
+			PaintSurface(frame, style, nil, 0)
+			PaintSurface(artBox.Frame, style, NumberSequence.new(0.42, 0.9))
 			nameLabel.Text = entry.Name
-			nameLabel.TextColor3 = COLORS.Text
+			PaintRarityText(nameLabel, entry, true)
 			rarityChip.Frame.Visible = true
 			rarityChip.Label.Text = string.upper(entry.Rarity)
 		end
@@ -1694,6 +1808,7 @@ local function RenderList(entries)
 
 	ClearCards()
 	PruneShimmers()
+	PruneSurfaces()
 	Prediction.Grid.CellSize = UDim2.fromOffset(cellWidth, cellHeight)
 	Prediction.Grid.CellPadding = UDim2.fromOffset(GRID_GAP, GRID_GAP)
 
@@ -1850,6 +1965,7 @@ function Prediction.Build(groupbox, hooks)
 		Prediction.LastFrameAt = now
 
 		AnimateShimmers(now)
+		AnimateSurfaces(now)
 
 		local preview = Prediction.Preview
 		if preview and preview.Frame.Visible then
