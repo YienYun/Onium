@@ -204,9 +204,11 @@ Layout tab (sejak groupbox lebar tersedia):
 
 Catatan tampilan:
 
-- Latar kartu (preview maupun kartu list) memakai gradient rarity game yang dicerahkan (`BuildArtSequence`), meniru tampilan Chili: kartu DIVINE jadi emas, kartu gelap tetap gelap.
-- Warna teks dihitung dari luminance gradient (`ReadSurfaceInk`): kartu terang memakai tinta cokelat gelap, kartu gelap memakai putih, supaya kontras selalu terbaca.
-- Kartu preview: art pet + glow, badge egg bundar, chip `RANK n` kiri atas, mutasi bertumpuk di kanan atas, nama, pill rarity, income besar, dua pill `SIZE`/`WEIGHT`, bar status, dan tombol `Go to egg`.
+- Latar kartu (preview maupun kartu list) memakai gradient rarity game (`BuildArtSequence`, dicerahkan 14%): DIVINE jadi emas, ETERNAL ungu, SECRET silver.
+- Semua teks memakai font display bold + `UIStroke` gelap (`AddTextStroke`) dan bagian bawah kartu diberi shade gradient (`AddTextShade`), jadi teks tetap terbaca di kartu terang maupun gelap.
+- Kartu list memakai lapisan gloss di art (`AddGloss`) dan bayangan lembut di belakang kartu untuk kesan timbul.
+- Kartu preview: art pet + glow berputar, badge egg bundar, chip `RANK n` kiri atas, mutasi bertumpuk di kanan atas, nama bold, pill rarity, income besar, dua pill `SIZE`/`WEIGHT` (dengan icon), bar status, dan tombol `Go to egg` berikon egg.
+- Icon pill dikirim hub lewat `Icons = { Size, Weight, Egg }` pada parameter kedua `Prediction.Build`, jadi gampang diganti tanpa menyentuh modul.
 - Kartu list: chip `#n`, art + mutasi bertumpuk, baris waktu tersisa + `x` scale, nama, rarity, dan income.
 - Gambar dan teks kartu dibuat manual di modul (bukan `AddImage`/`AddSpotlightCard` bawaan library), karena kartu memerlukan art persegi, bar berisi waktu, dan teks yang bisa diberi gradient per label. Hanya kontrol `Sort By` dan `Show Preview Card` yang memakai element library.
 - Warna teks mengikuti palette Chili: income `#4DFF7A`, skala `#FFDF8A`, berat `#CDE7FF`, status Ready `#4DFF7A`, Growing `#FFC24D`, In Bag `#7FD8FF`.
