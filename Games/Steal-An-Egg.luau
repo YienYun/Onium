@@ -15016,6 +15016,11 @@ Hub.Features.BuildPlayerMovement(PlayerMoveGroup)
 Hub.Features.BuildPlayerCharacter(PlayerCharGroup)
 PredictionModule.BuildWebhook(DiscordWebhookGroup)
 PredictionModule.Build(EggPredictorGroup, {
+	Icons = {
+		Size = Hub.Icons.Speed,
+		Weight = Hub.Icons.Essence,
+		Egg = "rbxassetid://116524274262912",
+	},
 	OnGoToEgg = function(entry)
 		local targetRecord = nil
 		for _, fieldEgg in ipairs(Engine.CollectRawFieldEggs(true)) do

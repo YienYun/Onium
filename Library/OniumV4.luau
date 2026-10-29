@@ -13099,6 +13099,7 @@ function Library:CreateWindow(WindowInfo)
 				AutomaticSize = Enum.AutomaticSize.Y,
 				BackgroundTransparency = 1,
 				BorderSizePixel = 0,
+				LayoutOrder = 1000,
 				Size = UDim2.fromScale(1, 0),
 				Parent = TabFull,
 			})

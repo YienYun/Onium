@@ -54,6 +54,7 @@ local Prediction = {
 	Hero = nil,
 	ListColumn = nil,
 	Hooks = nil,
+	Icons = nil,
 	NextRefreshAt = 0,
 	RaysAngle = 0,
 	LastFrameAt = 0,
@@ -92,12 +93,12 @@ local FILTERS = {
 local CARD_TILE_ASSET = "rbxassetid://90325592797235"
 local PREVIEW_RAYS_ASSET = "rbxassetid://109516122757226"
 local PREVIEW_SHADOW_ASSET = "rbxassetid://10822615828"
-local HERO_HEIGHT = 338
+local HERO_HEIGHT = 352
 local HERO_GAP = 8
 local HERO_FILTER_HEIGHT = 20
 local HERO_MIN_WIDTH = 208
 local HERO_MAX_WIDTH = 252
-local PREVIEW_ART_HEIGHT = 148
+local PREVIEW_ART_HEIGHT = 156
 local MUTATION_STACK_LIMIT = 3
 local GRID_GAP = 8
 local FALLBACK_RARITY_COLOR = Color3.fromRGB(255, 255, 255)
@@ -531,7 +532,7 @@ local function BuildArtSequence(entry)
 			1,
 			#brightColors
 		)
-		table.insert(samples, brightColors[position]:Lerp(COLORS.Text, 0.36))
+		table.insert(samples, brightColors[position]:Lerp(COLORS.Text, 0.14))
 	end
 	if #samples == 1 then
 		table.insert(samples, samples[1])
@@ -544,22 +545,9 @@ local function BuildArtSequence(entry)
 end
 
 local DARK_INK = Color3.fromRGB(46, 32, 14)
-local LIGHT_INK = Color3.fromRGB(255, 255, 255)
 local PILL_LIGHT = Color3.fromRGB(250, 246, 232)
 local PILL_DARK = Color3.fromRGB(18, 16, 24)
-
-local function ReadSurfaceInk(entry)
-	local color = SampleSequence(BuildArtSequence(entry), 0.5)
-	local luminance = color.R * 0.299 + color.G * 0.587 + color.B * 0.114
-	return luminance > 0.56 and DARK_INK or LIGHT_INK
-end
-
-local function ReadIncomeSequence(ink)
-	if ink == DARK_INK then
-		return ColorSequence.new(Color3.fromRGB(22, 150, 60), Color3.fromRGB(10, 92, 34))
-	end
-	return ColorSequence.new(COLORS.IncomeTop, COLORS.IncomeBottom)
-end
+local SHADE = Color3.fromRGB(6, 6, 10)
 
 local function PaintGradient(target, name, sequence, rotation)
 	local gradient = target:FindFirstChild(name)
@@ -952,6 +940,57 @@ local function CreateMutationStack(parent, rightInset, topInset, width, textSize
 	return stack
 end
 
+local function AddTextStroke(label, color, thickness, transparency)
+	New("UIStroke", {
+		Color = color or SHADE,
+		Thickness = thickness or 1.4,
+		Transparency = transparency or 0.2,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual,
+		Parent = label,
+	})
+	return label
+end
+
+local function AddGloss(parent, corner)
+	return New("Frame", {
+		BackgroundColor3 = COLORS.Text,
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+		Size = UDim2.fromScale(1, 0.52),
+		ZIndex = 3,
+		Parent = parent,
+	}, {
+		New("UICorner", { CornerRadius = UDim.new(0, corner or 8) }),
+		New("UIGradient", {
+			Rotation = 90,
+			Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0.78),
+				NumberSequenceKeypoint.new(1, 1),
+			}),
+		}),
+	})
+end
+
+local function AddTextShade(parent, height, zIndex)
+	return New("Frame", {
+		AnchorPoint = Vector2.new(0, 1),
+		BackgroundColor3 = SHADE,
+		BorderSizePixel = 0,
+		Position = UDim2.fromScale(0, 1),
+		Size = UDim2.new(1, 0, height, 0),
+		ZIndex = zIndex or 1,
+		Parent = parent,
+	}, {
+		New("UIGradient", {
+			Rotation = 90,
+			Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1),
+				NumberSequenceKeypoint.new(1, 0.55),
+			}),
+		}),
+	})
+end
+
 local function CreateCard(parent, entry, metrics, index, theme)
 	local cell = New("Frame", {
 		Name = "PredictorCardCell",
@@ -962,23 +1001,29 @@ local function CreateCard(parent, entry, metrics, index, theme)
 		Parent = parent,
 	})
 
-	local ink = ReadSurfaceInk(entry)
 	local card = New("Frame", {
 		Name = "PredictorCard",
 		BackgroundColor3 = COLORS.Text,
-		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
 		Position = UDim2.fromOffset(CARD_MARGIN, CARD_MARGIN),
 		Size = UDim2.fromOffset(metrics.Width, metrics.Height),
 		Parent = cell,
 	}, {
-		New("UICorner", { CornerRadius = UDim.new(0, 8) }),
+		New("UICorner", { CornerRadius = UDim.new(0, 10) }),
 	})
 	PaintGradient(card, "RarityPaint", BuildArtSequence(entry), 90)
 
-	local baseStroke = New("UIStroke", {
-		Color = ink,
+	New("UIStroke", {
+		Color = COLORS.Text,
 		Thickness = 1,
+		Transparency = 0.55,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		Parent = card,
+	})
+
+	local baseStroke = New("UIStroke", {
+		Color = SHADE,
+		Thickness = 1.2,
 		Transparency = 0.55,
 		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
 		Parent = card,
@@ -986,8 +1031,8 @@ local function CreateCard(parent, entry, metrics, index, theme)
 
 	local shimmerStroke = New("UIStroke", {
 		Color = COLORS.Text,
-		Thickness = 1.1,
-		Transparency = 0.4,
+		Thickness = 1.2,
+		Transparency = 0.5,
 		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
 		Parent = card,
 	})
@@ -1002,14 +1047,18 @@ local function CreateCard(parent, entry, metrics, index, theme)
 		theme,
 		false
 	)
-	PaintGradient(artBox.Frame, "RarityPaint", BuildArtSequence(entry), 90).Transparency = NumberSequence.new(0.35, 0.7)
+	PaintGradient(artBox.Frame, "RarityPaint", BuildArtSequence(entry), 90).Transparency = NumberSequence.new(0.5, 0.92)
+	artBox.Pet.Size = UDim2.fromScale(0.94, 0.94)
+	AddGloss(artBox.Frame, 7)
+
+	AddTextShade(card, 0.62, 1)
 
 	local rankChip = New("Frame", {
 		BackgroundColor3 = PILL_DARK,
-		BackgroundTransparency = 0.35,
+		BackgroundTransparency = 0.3,
 		BorderSizePixel = 0,
 		Position = UDim2.fromOffset(metrics.Inset + 2, metrics.ArtY + 2),
-		Size = UDim2.fromOffset(math.max(18, metrics.RankSize * 2), metrics.RankSize + 5),
+		Size = UDim2.fromOffset(math.max(20, metrics.RankSize * 2 + 6), metrics.RankSize + 6),
 		ZIndex = 8,
 		Parent = card,
 	}, {
@@ -1024,34 +1073,49 @@ local function CreateCard(parent, entry, metrics, index, theme)
 		TextColor3 = COLORS.Text,
 		ZIndex = 9,
 	})
+	UseDisplayFont(rankLabel)
 
 	local mutationStack = CreateMutationStack(
 		artBox.Frame,
 		4,
-		2,
-		math.max(28, math.floor(metrics.ContentWidth * 0.66)),
+		3,
+		math.max(30, math.floor(metrics.ContentWidth * 0.72)),
 		metrics.RankSize,
 		metrics.RankSize + 2
 	)
 	mutationStack.Update(entry.Mutations)
 
-	local timeLabel = CreateLabel(card, {
-		Position = UDim2.fromOffset(metrics.Inset, metrics.MetaY),
-		Size = UDim2.new(0, metrics.ContentWidth, 0, metrics.MetaHeight),
-		Text = entry.Status == "Growing" and FormatRemaining(entry.Remaining) or entry.Status,
-		TextSize = metrics.MetaSize,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		TextColor3 = ink,
-	})
+	local timeLabel = AddTextStroke(
+		CreateLabel(card, {
+			Position = UDim2.fromOffset(metrics.Inset, metrics.MetaY),
+			Size = UDim2.new(0, metrics.ContentWidth, 0, metrics.MetaHeight),
+			Text = entry.Status == "Growing" and FormatRemaining(entry.Remaining) or entry.Status,
+			TextSize = metrics.MetaSize,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextColor3 = COLORS.Text,
+			ZIndex = 4,
+		}),
+		SHADE,
+		1.2,
+		0.3
+	)
+	UseDisplayFont(timeLabel)
 
-	local scaleLabel = CreateLabel(card, {
-		Position = UDim2.fromOffset(metrics.Inset, metrics.MetaY),
-		Size = UDim2.new(0, metrics.ContentWidth, 0, metrics.MetaHeight),
-		Text = string.format("x%.2f", entry.Scale),
-		TextSize = metrics.MetaSize,
-		TextXAlignment = Enum.TextXAlignment.Right,
-		TextColor3 = ink,
-	})
+	local scaleLabel = AddTextStroke(
+		CreateLabel(card, {
+			Position = UDim2.fromOffset(metrics.Inset, metrics.MetaY),
+			Size = UDim2.new(0, metrics.ContentWidth, 0, metrics.MetaHeight),
+			Text = string.format("x%.2f", entry.Scale),
+			TextSize = metrics.MetaSize,
+			TextXAlignment = Enum.TextXAlignment.Right,
+			TextColor3 = COLORS.ScaleTop,
+			ZIndex = 4,
+		}),
+		SHADE,
+		1.2,
+		0.3
+	)
+	UseDisplayFont(scaleLabel)
 
 	local nameLabel = CreateLabel(card, {
 		Position = UDim2.fromOffset(metrics.Inset, metrics.NameY),
@@ -1060,9 +1124,11 @@ local function CreateCard(parent, entry, metrics, index, theme)
 		TextSize = metrics.NameSize,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		TextTruncate = Enum.TextTruncate.AtEnd,
-		TextColor3 = ink,
+		TextColor3 = COLORS.Text,
+		ZIndex = 4,
 	})
 	UseDisplayFont(nameLabel)
+	AddTextStroke(nameLabel, SHADE, 1.6, 0.15)
 
 	local rarityLabel = CreateLabel(card, {
 		Position = UDim2.fromOffset(metrics.Inset, metrics.RarityY),
@@ -1070,9 +1136,11 @@ local function CreateCard(parent, entry, metrics, index, theme)
 		Text = string.upper(entry.Rarity),
 		TextSize = metrics.RaritySize,
 		TextXAlignment = Enum.TextXAlignment.Center,
-		TextColor3 = ink,
-		TextTransparency = 0.25,
+		ZIndex = 4,
 	})
+	UseDisplayFont(rarityLabel)
+	PaintRarityText(rarityLabel, entry, false)
+	AddTextStroke(rarityLabel, SHADE, 1.4, 0.15)
 
 	local valueLabel = CreateLabel(card, {
 		Position = UDim2.fromOffset(metrics.Inset, metrics.ValueY),
@@ -1081,8 +1149,11 @@ local function CreateCard(parent, entry, metrics, index, theme)
 		TextSize = metrics.ValueSize,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		TextColor3 = COLORS.Text,
+		ZIndex = 4,
 	})
-	PaintGradient(valueLabel, "TextPaint", ReadIncomeSequence(ink), 90)
+	UseDisplayFont(valueLabel)
+	PaintGradient(valueLabel, "TextPaint", ColorSequence.new(COLORS.IncomeTop, COLORS.IncomeBottom), 90)
+	AddTextStroke(valueLabel, SHADE, 1.6, 0.2)
 
 	local selection = New("UIStroke", {
 		Color = COLORS.Text,
@@ -1104,12 +1175,12 @@ local function CreateCard(parent, entry, metrics, index, theme)
 
 	button.MouseEnter:Connect(function()
 		baseStroke.Transparency = 0.1
-		baseStroke.Thickness = 1.6
+		baseStroke.Thickness = 1.8
 	end)
 
 	button.MouseLeave:Connect(function()
 		baseStroke.Transparency = 0.55
-		baseStroke.Thickness = 1
+		baseStroke.Thickness = 1.2
 	end)
 
 	button.MouseButton1Click:Connect(function()
@@ -1142,19 +1213,24 @@ end
 local function CreateChip(parent, position, anchorX, textSize)
 	local chip = New("Frame", {
 		BackgroundColor3 = PILL_LIGHT,
-		BackgroundTransparency = 0.05,
 		BorderSizePixel = 0,
 		AnchorPoint = Vector2.new(anchorX, 0),
 		AutomaticSize = Enum.AutomaticSize.X,
 		Position = position,
-		Size = UDim2.new(0, 0, 0, 16),
+		Size = UDim2.new(0, 0, 0, 18),
 		ZIndex = 7,
 		Parent = parent,
 	}, {
 		New("UICorner", { CornerRadius = UDim.new(0.5, 0) }),
+		New("UIStroke", {
+			Color = DARK_INK,
+			Thickness = 1,
+			Transparency = 0.55,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		}),
 		New("UIPadding", {
-			PaddingLeft = UDim.new(0, 7),
-			PaddingRight = UDim.new(0, 7),
+			PaddingLeft = UDim.new(0, 9),
+			PaddingRight = UDim.new(0, 9),
 		}),
 	})
 
@@ -1174,57 +1250,91 @@ local function CreateChip(parent, position, anchorX, textSize)
 	return { Frame = chip, Label = label }
 end
 
-local function CreateStatPill(parent, position, size, captionText)
+local function CreateStatPill(parent, position, size, captionText, iconId)
 	local pill = New("Frame", {
 		BackgroundColor3 = PILL_LIGHT,
-		BackgroundTransparency = 0.08,
+		BackgroundTransparency = 0.04,
 		BorderSizePixel = 0,
 		Position = position,
 		Size = size,
+		ZIndex = 6,
 		Parent = parent,
 	}, {
-		New("UICorner", { CornerRadius = UDim.new(0, 7) }),
+		New("UICorner", { CornerRadius = UDim.new(0, 8) }),
+		New("UIStroke", {
+			Color = DARK_INK,
+			Thickness = 1,
+			Transparency = 0.6,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		}),
 	})
+
+	local textLeft = 0
+	if iconId and iconId ~= "" then
+		textLeft = 20
+		New("ImageLabel", {
+			BackgroundTransparency = 1,
+			Position = UDim2.fromOffset(7, 7),
+			Size = UDim2.fromOffset(12, 12),
+			Image = iconId,
+			ImageColor3 = DARK_INK,
+			ScaleType = Enum.ScaleType.Fit,
+			ZIndex = 7,
+			Parent = pill,
+		})
+	end
 
 	local valueLabel = CreateLabel(pill, {
-		Position = UDim2.fromOffset(0, 5),
-		Size = UDim2.new(1, 0, 0, 12),
+		Position = UDim2.fromOffset(textLeft, 4),
+		Size = UDim2.new(1, -(textLeft + 4), 0, 13),
 		Text = "",
-		TextSize = 10,
+		TextSize = 11,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		TextColor3 = DARK_INK,
+		ZIndex = 7,
 	})
+	UseDisplayFont(valueLabel)
 
 	local caption = CreateLabel(pill, {
-		Position = UDim2.fromOffset(0, 16),
-		Size = UDim2.new(1, 0, 0, 9),
+		Position = UDim2.fromOffset(textLeft, 17),
+		Size = UDim2.new(1, -(textLeft + 4), 0, 9),
 		Text = captionText,
 		TextSize = 7,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		TextColor3 = DARK_INK,
-		TextTransparency = 0.45,
+		TextTransparency = 0.5,
+		ZIndex = 7,
 	})
 
 	return { Frame = pill, Value = valueLabel, Caption = caption }
 end
 
 local function CreatePreview(parent, theme)
+	local icons = Prediction.Icons or {}
+
 	local frame = New("Frame", {
 		Name = "PredictorPreview",
 		BackgroundColor3 = COLORS.Text,
-		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
 		Size = UDim2.fromOffset(HERO_MIN_WIDTH, HERO_HEIGHT),
 		Parent = parent,
 	}, {
-		New("UICorner", { CornerRadius = UDim.new(0, 14) }),
+		New("UICorner", { CornerRadius = UDim.new(0, 16) }),
 	})
 	PaintGradient(frame, "CardPaint", ColorSequence.new(theme.Surface, COLORS.ShadowTint), 90)
 
+	New("UIStroke", {
+		Color = COLORS.Text,
+		Thickness = 1.4,
+		Transparency = 0.42,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		Parent = frame,
+	})
+
 	local glowStroke = New("UIStroke", {
 		Color = COLORS.Text,
-		Thickness = 1.6,
-		Transparency = 0.24,
+		Thickness = 2,
+		Transparency = 0.16,
 		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
 		Parent = frame,
 	})
@@ -1234,24 +1344,25 @@ local function CreatePreview(parent, theme)
 	local artBox = CreateArtBox(
 		frame,
 		{ PetIcon = "", EggIcon = "", Rarity = "Common", RarityColor = COLORS.Text, Gradient = nil, MutationText = "" },
-		UDim2.fromOffset(8, 6),
+		UDim2.fromOffset(8, 8),
 		UDim2.fromOffset(artWidth, PREVIEW_ART_HEIGHT),
-		math.floor(artWidth * 0.2),
+		math.floor(artWidth * 0.21),
 		theme,
 		true
 	)
 	PaintGradient(artBox.Frame, "RarityPaint", ColorSequence.new(theme.Surface, theme.Surface), 90)
 	artBox.Pet.Image = ""
 	artBox.Egg.Image = ""
+	artBox.Pet.Size = UDim2.fromScale(0.96, 0.96)
 
 	local rays = New("ImageLabel", {
 		BackgroundTransparency = 1,
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.46),
-		Size = UDim2.fromScale(1.7, 1.7),
+		Size = UDim2.fromScale(1.8, 1.8),
 		Image = PREVIEW_RAYS_ASSET,
 		ImageColor3 = COLORS.Text,
-		ImageTransparency = 0.3,
+		ImageTransparency = 0.24,
 		ScaleType = Enum.ScaleType.Fit,
 		ZIndex = 1,
 		Parent = artBox.Frame,
@@ -1259,18 +1370,18 @@ local function CreatePreview(parent, theme)
 
 	local rankChip = New("Frame", {
 		BackgroundColor3 = PILL_DARK,
-		BackgroundTransparency = 0.35,
+		BackgroundTransparency = 0.3,
 		BorderSizePixel = 0,
 		AutomaticSize = Enum.AutomaticSize.X,
 		Position = UDim2.fromOffset(6, 6),
-		Size = UDim2.new(0, 0, 0, 17),
+		Size = UDim2.new(0, 0, 0, 18),
 		ZIndex = 8,
 		Parent = artBox.Frame,
 	}, {
 		New("UICorner", { CornerRadius = UDim.new(0.5, 0) }),
 		New("UIPadding", {
-			PaddingLeft = UDim.new(0, 8),
-			PaddingRight = UDim.new(0, 8),
+			PaddingLeft = UDim.new(0, 9),
+			PaddingRight = UDim.new(0, 9),
 		}),
 	})
 
@@ -1287,63 +1398,97 @@ local function CreatePreview(parent, theme)
 	})
 	UseDisplayFont(rankLabel)
 
-	local mutationStack = CreateMutationStack(artBox.Frame, 6, 7, math.floor(artWidth * 0.58), 11, 13)
+	local mutationStack = CreateMutationStack(artBox.Frame, 7, 8, math.floor(artWidth * 0.6), 11, 14)
+	AddGloss(artBox.Frame, 9)
 
 	local nameLabel = CreateLabel(frame, {
-		Position = UDim2.fromOffset(8, 160),
-		Size = UDim2.new(1, -16, 0, 32),
+		Position = UDim2.fromOffset(8, 170),
+		Size = UDim2.new(1, -16, 0, 34),
 		Text = "No egg",
-		TextSize = 16,
+		TextSize = 18,
 		TextWrapped = true,
 		TextTruncate = Enum.TextTruncate.None,
 		TextYAlignment = Enum.TextYAlignment.Center,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		TextColor3 = COLORS.Subtext,
+		ZIndex = 4,
 	})
+	UseDisplayFont(nameLabel)
+	AddTextStroke(nameLabel, SHADE, 1.8, 0.15)
 
-	local rarityChip = CreateChip(frame, UDim2.new(0.5, 0, 0, 196), 0.5, 9)
-	rarityChip.Frame.AnchorPoint = Vector2.new(0.5, 0)
+	local rarityChip = CreateChip(frame, UDim2.new(0.5, 0, 0, 208), 0.5, 10)
 	rarityChip.Frame.Visible = false
 
 	local valueLabel = CreateLabel(frame, {
-		Position = UDim2.fromOffset(8, 216),
-		Size = UDim2.new(1, -16, 0, 30),
-		TextSize = 25,
+		Position = UDim2.fromOffset(8, 230),
+		Size = UDim2.new(1, -16, 0, 32),
+		TextSize = 27,
 		TextXAlignment = Enum.TextXAlignment.Center,
+		ZIndex = 4,
 	})
+	UseDisplayFont(valueLabel)
 	PaintGradient(valueLabel, "TextPaint", ColorSequence.new(COLORS.IncomeTop, COLORS.IncomeBottom), 90)
+	AddTextStroke(valueLabel, SHADE, 1.8, 0.18)
 
 	local pillWidth = math.floor((HERO_MIN_WIDTH - 16 - 6) / 2)
-	local scalePill = CreateStatPill(frame, UDim2.fromOffset(8, 250), UDim2.fromOffset(pillWidth, 30), "SIZE")
+	local scalePill = CreateStatPill(
+		frame,
+		UDim2.fromOffset(8, 266),
+		UDim2.fromOffset(pillWidth, 32),
+		"SIZE",
+		icons.Size
+	)
 	local weightPill = CreateStatPill(
 		frame,
-		UDim2.fromOffset(8 + pillWidth + 6, 250),
-		UDim2.fromOffset(pillWidth, 30),
-		"WEIGHT"
+		UDim2.fromOffset(8 + pillWidth + 6, 266),
+		UDim2.fromOffset(pillWidth, 32),
+		"WEIGHT",
+		icons.Weight
 	)
 
 	local bar = CreateProgressBar(frame, 18, 9, theme)
-	bar.Track.Position = UDim2.fromOffset(8, 286)
+	bar.Track.Position = UDim2.fromOffset(8, 302)
 	bar.Track.Size = UDim2.new(1, -16, 0, 18)
 
 	local goButton = nil
 	if Prediction.Hooks and type(Prediction.Hooks.OnGoToEgg) == "function" then
 		goButton = New("TextButton", {
 			BackgroundColor3 = PILL_LIGHT,
-			BackgroundTransparency = 0.02,
 			AutoButtonColor = true,
 			BorderSizePixel = 0,
-			Position = UDim2.fromOffset(8, 308),
-			Size = UDim2.new(1, -16, 0, 24),
+			Position = UDim2.fromOffset(8, 324),
+			Size = UDim2.new(1, -16, 0, 22),
 			Text = "Go to egg",
 			TextColor3 = DARK_INK,
 			TextSize = 11,
+			TextXAlignment = Enum.TextXAlignment.Center,
 			ZIndex = 8,
 			Parent = frame,
 		}, {
 			New("UICorner", { CornerRadius = UDim.new(1, 0) }),
+			New("UIStroke", {
+				Color = DARK_INK,
+				Thickness = 1,
+				Transparency = 0.6,
+				ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+			}),
 		})
 		UseDisplayFont(goButton)
+
+		if icons.Egg and icons.Egg ~= "" then
+			goButton.TextXAlignment = Enum.TextXAlignment.Center
+			New("ImageLabel", {
+				BackgroundTransparency = 1,
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.new(0.5, -38, 0.5, 0),
+				Size = UDim2.fromOffset(14, 14),
+				Image = icons.Egg,
+				ImageColor3 = DARK_INK,
+				ScaleType = Enum.ScaleType.Fit,
+				ZIndex = 9,
+				Parent = goButton,
+			})
+		end
 	end
 
 	local preview = {
@@ -1358,9 +1503,9 @@ local function CreatePreview(parent, theme)
 		frame.Size = UDim2.fromOffset(width, HERO_HEIGHT)
 		artBox.Frame.Size = UDim2.fromOffset(width - 16, PREVIEW_ART_HEIGHT)
 		local nextPillWidth = math.floor((width - 16 - 6) / 2)
-		scalePill.Frame.Size = UDim2.fromOffset(nextPillWidth, 30)
-		weightPill.Frame.Position = UDim2.fromOffset(8 + nextPillWidth + 6, 250)
-		weightPill.Frame.Size = UDim2.fromOffset(nextPillWidth, 30)
+		scalePill.Frame.Size = UDim2.fromOffset(nextPillWidth, 32)
+		weightPill.Frame.Position = UDim2.fromOffset(8 + nextPillWidth + 6, 266)
+		weightPill.Frame.Size = UDim2.fromOffset(nextPillWidth, 32)
 	end
 
 	function preview.Update(entry, rank)
@@ -1389,19 +1534,16 @@ local function CreatePreview(parent, theme)
 		local key = entry.Id .. "|" .. entry.Rarity .. "|" .. entry.Name
 		if preview.Key ~= key then
 			preview.Key = key
-			local ink = ReadSurfaceInk(entry)
 			artBox.Pet.Image = entry.PetIcon
 			artBox.Egg.Image = entry.EggIcon
-			artBox.BadgeStroke.Color = ink
-			PaintGradient(artBox.Frame, "RarityPaint", BuildArtSequence(entry), 90).Transparency = NumberSequence.new(0.4, 0.75)
+			artBox.BadgeStroke.Color = entry.RarityColor
+			PaintGradient(artBox.Frame, "RarityPaint", BuildArtSequence(entry), 90).Transparency =
+				NumberSequence.new(0.42, 0.9)
 			PaintGradient(frame, "CardPaint", BuildArtSequence(entry), 90)
 			nameLabel.Text = entry.Name
-			nameLabel.TextColor3 = ink
+			nameLabel.TextColor3 = COLORS.Text
 			rarityChip.Frame.Visible = true
 			rarityChip.Label.Text = string.upper(entry.Rarity)
-			rarityChip.Label.TextColor3 = ink
-			rarityChip.Frame.BackgroundColor3 = ink == DARK_INK and PILL_LIGHT or PILL_DARK
-			PaintGradient(valueLabel, "TextPaint", ReadIncomeSequence(ink), 90)
 		end
 
 		mutationStack.Update(entry.Mutations)
@@ -1615,6 +1757,7 @@ end
 function Prediction.Build(groupbox, hooks)
 	Prediction.Groupbox = groupbox
 	Prediction.Hooks = hooks
+	Prediction.Icons = type(hooks) == "table" and hooks.Icons or nil
 	Prediction.Theme = ReadTheme(groupbox)
 	local container = groupbox.Container
 
