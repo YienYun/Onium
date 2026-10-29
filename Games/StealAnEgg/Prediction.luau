@@ -788,7 +788,7 @@ local function AnimateSurfaces(now)
 	for _, surface in ipairs(Prediction.Surfaces) do
 		local gradient = surface.Gradient
 		if gradient and gradient.Parent then
-			gradient.Offset = Vector2.new(math.cos(now * 0.45 + surface.Phase) * 0.32, 0)
+			gradient.Offset = Vector2.new(math.cos(now * 0.4 + surface.Phase) * 0.42, 0)
 		end
 	end
 end
