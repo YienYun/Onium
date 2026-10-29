@@ -87,8 +87,11 @@ local FILTERS = {
 local CARD_TILE_ASSET = "rbxassetid://90325592797235"
 local PREVIEW_RAYS_ASSET = "rbxassetid://109516122757226"
 local PREVIEW_SHADOW_ASSET = "rbxassetid://10822615828"
-local PREVIEW_HEIGHT = 132
-local PREVIEW_ART_SIZE = 116
+local HERO_HEIGHT = 276
+local HERO_PREVIEW_WIDTH = 272
+local HERO_GAP = 8
+local HERO_FILTER_HEIGHT = 21
+local PREVIEW_ART_HEIGHT = 148
 local GRID_GAP = 8
 local FALLBACK_RARITY_COLOR = Color3.fromRGB(255, 255, 255)
 
@@ -568,9 +571,6 @@ local SCROLLBAR_WIDTH = 4
 local GRID_GAP = 7
 local MIN_CARD_WIDTH = 126
 local CARD_MARGIN = 3
-local VISIBLE_ROWS = 2
-local PREVIEW_HEIGHT = 122
-local PREVIEW_ART_SIZE = 106
 local SHIMMER_SPEED = 0.9
 local SHIMMER_ROTATION = 45
 
@@ -1045,7 +1045,14 @@ local function CreateCard(parent, entry, metrics, index, theme)
 		Prediction.SelectedId = entry.Id
 		Prediction.SelectCard()
 		if Prediction.Preview then
-			Prediction.Preview.Update(entry)
+			local rank = 0
+			for index, current in ipairs(Prediction.Entries or {}) do
+				if current.Id == entry.Id then
+					rank = index
+					break
+				end
+			end
+			Prediction.Preview.Update(entry, rank)
 		end
 	end)
 
@@ -1065,38 +1072,79 @@ local function CreateCard(parent, entry, metrics, index, theme)
 	}
 end
 
+local function CreatePreviewChip(parent, anchorX, position, textSize)
+	local chip = New("Frame", {
+		BackgroundColor3 = COLORS.Track,
+		BackgroundTransparency = 0.32,
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(anchorX, 0),
+		AutomaticSize = Enum.AutomaticSize.X,
+		Position = position,
+		Size = UDim2.new(0, 0, 0, 16),
+		ZIndex = 7,
+		Parent = parent,
+	}, {
+		New("UICorner", { CornerRadius = UDim.new(0.5, 0) }),
+		New("UIStroke", {
+			Color = COLORS.Text,
+			Thickness = 1,
+			Transparency = 0.55,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		}),
+		New("UIPadding", {
+			PaddingLeft = UDim.new(0, 7),
+			PaddingRight = UDim.new(0, 7),
+		}),
+	})
+
+	local label = New("TextLabel", {
+		BackgroundTransparency = 1,
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.new(0, 0, 1, 0),
+		Text = "",
+		TextColor3 = COLORS.Text,
+		TextSize = textSize or 9,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		ZIndex = 8,
+		Parent = chip,
+	})
+	UseDisplayFont(label)
+
+	return { Frame = chip, Label = label }
+end
+
 local function CreatePreview(parent, theme)
 	local frame = New("Frame", {
 		Name = "PredictorPreview",
 		BackgroundColor3 = theme.Surface,
-		BackgroundTransparency = 0.1,
+		BackgroundTransparency = 0.04,
 		BorderSizePixel = 0,
-		LayoutOrder = 2,
-		Size = UDim2.new(1, -CONTAINER_PADDING * 2, 0, PREVIEW_HEIGHT),
+		Size = UDim2.fromOffset(HERO_PREVIEW_WIDTH, HERO_HEIGHT),
 		Parent = parent,
 	}, {
-		New("UICorner", { CornerRadius = UDim.new(0, 11) }),
+		New("UICorner", { CornerRadius = UDim.new(0, 14) }),
 	})
+	PaintGradient(frame, "CardPaint", ColorSequence.new(theme.Surface, COLORS.ShadowTint), 90)
 
 	local glowStroke = New("UIStroke", {
 		Color = COLORS.Text,
-		Thickness = 1.5,
-		Transparency = 0.15,
+		Thickness = 1.6,
+		Transparency = 0.1,
 		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
 		Parent = frame,
 	})
 	AddShimmer(glowStroke, 0, 35)
 
+	local artWidth = HERO_PREVIEW_WIDTH - 16
 	local artBox = CreateArtBox(
 		frame,
 		{ PetIcon = "", EggIcon = "", Rarity = "Common", RarityColor = COLORS.Text, Gradient = nil, MutationText = "" },
 		UDim2.fromOffset(8, 8),
-		UDim2.fromOffset(PREVIEW_ART_SIZE, PREVIEW_ART_SIZE),
-		26,
+		UDim2.fromOffset(artWidth, PREVIEW_ART_HEIGHT),
+		28,
 		theme,
 		true
 	)
-
 	PaintGradient(artBox.Frame, "RarityPaint", ColorSequence.new(theme.Surface, theme.Surface), 90)
 	artBox.Pet.Image = ""
 	artBox.Egg.Image = ""
@@ -1105,62 +1153,60 @@ local function CreatePreview(parent, theme)
 		BackgroundTransparency = 1,
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.46),
-		Size = UDim2.fromScale(1.9, 1.9),
+		Size = UDim2.fromScale(1.7, 1.7),
 		Image = PREVIEW_RAYS_ASSET,
 		ImageColor3 = COLORS.Text,
-		ImageTransparency = 0.24,
+		ImageTransparency = 0.28,
 		ScaleType = Enum.ScaleType.Fit,
+		ZIndex = 1,
 		Parent = artBox.Frame,
 	})
-	rays.ZIndex = 1
 
-	local bodyX = 8 + PREVIEW_ART_SIZE + 12
-	local body = New("Frame", {
-		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(bodyX, 8),
-		Size = UDim2.new(1, -(bodyX + 8), 0, PREVIEW_ART_SIZE),
-		Parent = frame,
+	local rankChip = CreatePreviewChip(artBox.Frame, 0, UDim2.fromOffset(6, 6), 9)
+	rankChip.Label.Text = "RANK -"
+	local mutationLabel = CreateLabel(artBox.Frame, {
+		Position = UDim2.new(0, 6, 0, 8),
+		Size = UDim2.new(1, -12, 0, 12),
+		Text = "",
+		TextSize = 9,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		RichText = true,
+		ZIndex = 8,
 	})
 
-	local nameLabel = CreateLabel(body, {
-		Position = UDim2.fromOffset(0, 6),
-		Size = UDim2.new(1, 0, 0, 20),
+	local nameLabel = CreateLabel(frame, {
+		Position = UDim2.fromOffset(8, 160),
+		Size = UDim2.new(1, -16, 0, 30),
 		Text = "No egg",
 		TextSize = 16,
+		TextWrapped = true,
+		TextTruncate = Enum.TextTruncate.None,
+		TextYAlignment = Enum.TextYAlignment.Top,
 		TextColor3 = COLORS.Subtext,
 	})
 
-	local mutationLabel = CreateLabel(body, {
-		Position = UDim2.fromOffset(0, 26),
-		Size = UDim2.new(1, 0, 0, 12),
-		TextSize = 9,
-		RichText = true,
-	})
+	local rarityChip = CreatePreviewChip(frame, 0.5, UDim2.new(0.5, 0, 0, 193), 9)
 
-	local rarityLabel = CreateLabel(body, {
-		Position = UDim2.fromOffset(0, 38),
-		Size = UDim2.new(1, 0, 0, 12),
-		TextSize = 9,
-	})
-
-	local valueLabel = CreateLabel(body, {
-		Position = UDim2.fromOffset(0, 51),
-		Size = UDim2.new(1, 0, 0, 20),
-		TextSize = 17,
+	local valueLabel = CreateLabel(frame, {
+		Position = UDim2.fromOffset(8, 211),
+		Size = UDim2.new(1, -16, 0, 26),
+		TextSize = 22,
+		TextXAlignment = Enum.TextXAlignment.Center,
 	})
 	PaintGradient(valueLabel, "TextPaint", ColorSequence.new(COLORS.IncomeTop, COLORS.IncomeBottom), 90)
 
 	local statsRow = New("Frame", {
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(0, 71),
-		Size = UDim2.new(1, 0, 0, 14),
-		Parent = body,
+		Position = UDim2.fromOffset(8, 240),
+		Size = UDim2.new(1, -16, 0, 13),
+		Parent = frame,
 	}, {
 		New("UIListLayout", {
 			FillDirection = Enum.FillDirection.Horizontal,
+			HorizontalAlignment = Enum.HorizontalAlignment.Center,
 			VerticalAlignment = Enum.VerticalAlignment.Center,
 			SortOrder = Enum.SortOrder.LayoutOrder,
-			Padding = UDim.new(0, 8),
+			Padding = UDim.new(0, 10),
 		}),
 	})
 
@@ -1180,9 +1226,9 @@ local function CreatePreview(parent, theme)
 	})
 	PaintGradient(weightLabel, "TextPaint", ColorSequence.new(COLORS.WeightTop, COLORS.WeightBottom), 90)
 
-	local bar = CreateProgressBar(body, 14, 9, theme)
-	bar.Track.Position = UDim2.fromOffset(0, 87)
-	bar.Track.Size = UDim2.new(1, 0, 0, 14)
+	local bar = CreateProgressBar(frame, 14, 9, theme)
+	bar.Track.Position = UDim2.fromOffset(8, 255)
+	bar.Track.Size = UDim2.new(1, -16, 0, 14)
 
 	local preview = {
 		Frame = frame,
@@ -1191,13 +1237,14 @@ local function CreatePreview(parent, theme)
 		Key = nil,
 	}
 
-	function preview.Update(entry)
+	function preview.Update(entry, rank)
 		if not entry then
 			preview.Key = nil
+			rankChip.Label.Text = "RANK -"
 			nameLabel.Text = "No egg"
 			nameLabel.TextColor3 = COLORS.Subtext
 			mutationLabel.Text = ""
-			rarityLabel.Text = ""
+			rarityChip.Label.Text = ""
 			valueLabel.Text = ""
 			scaleLabel.Text = ""
 			weightLabel.Text = ""
@@ -1207,6 +1254,8 @@ local function CreatePreview(parent, theme)
 			ApplyStatusFill(bar, nil)
 			return
 		end
+
+		rankChip.Label.Text = string.format("RANK %d", rank or 0)
 
 		local key = entry.Id .. "|" .. entry.Rarity .. "|" .. entry.Name .. "|" .. entry.MutationText
 		if preview.Key ~= key then
@@ -1218,8 +1267,8 @@ local function CreatePreview(parent, theme)
 			nameLabel.Text = entry.Name
 			PaintRarityText(nameLabel, entry, true)
 			mutationLabel.Text = entry.MutationText
-			rarityLabel.Text = string.upper(entry.Rarity)
-			PaintRarityText(rarityLabel, entry, false)
+			rarityChip.Label.Text = string.upper(entry.Rarity)
+			PaintRarityText(rarityChip.Label, entry, false)
 		end
 
 		valueLabel.Text = FormatRate(entry.Income)
@@ -1342,7 +1391,7 @@ local function RenderList(entries)
 	end
 
 	local usable = width - SCROLLBAR_WIDTH - CARD_MARGIN * 2
-	local columns = math.clamp(math.floor((usable + GRID_GAP) / (MIN_CARD_WIDTH + GRID_GAP)), 1, 4)
+	local columns = math.clamp(math.floor((usable + GRID_GAP) / (MIN_CARD_WIDTH + GRID_GAP)), 1, 3)
 	local cellWidth = math.floor((usable - GRID_GAP * (columns - 1)) / columns)
 	local metrics = CardMetrics(cellWidth - CARD_MARGIN * 2)
 	local cellHeight = metrics.Height + CARD_MARGIN * 2
@@ -1352,14 +1401,6 @@ local function RenderList(entries)
 	Prediction.Grid.CellSize = UDim2.fromOffset(cellWidth, cellHeight)
 	Prediction.Grid.CellPadding = UDim2.fromOffset(GRID_GAP, GRID_GAP)
 
-	local rows = math.ceil(#entries / columns)
-	local visibleRows = math.max(1, math.min(rows, VISIBLE_ROWS))
-	scroll.Size = UDim2.new(
-		1,
-		-CONTAINER_PADDING * 2 - CARD_MARGIN * 2,
-		0,
-		visibleRows * cellHeight + math.max(0, visibleRows - 1) * GRID_GAP
-	)
 	Prediction.CardWidth = width
 
 	for index, entry in ipairs(entries) do
@@ -1396,9 +1437,16 @@ end
 function Prediction.SetCardVisible(visible)
 	if Prediction.Preview then
 		Prediction.Preview.Frame.Visible = visible == true
-		if Prediction.Groupbox then
-			Prediction.Groupbox:Resize()
-		end
+	end
+	local column = Prediction.ListColumn
+	if column then
+		local offset = visible and (HERO_PREVIEW_WIDTH + HERO_GAP) or 0
+		column.Position = UDim2.fromOffset(offset, 0)
+		column.Size = UDim2.new(1, -offset, 0, HERO_HEIGHT)
+	end
+	Prediction.Signature = ""
+	if Prediction.Groupbox then
+		Prediction.Groupbox:Resize()
 	end
 end
 
@@ -1426,22 +1474,41 @@ function Prediction.Build(groupbox)
 		end,
 	})
 
-	Prediction.Preview = CreatePreview(container, Prediction.Theme)
-	CreateFilterBar(container, Prediction.Theme)
+	local hero = New("Frame", {
+		Name = "PredictorHero",
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, -CONTAINER_PADDING * 2, 0, HERO_HEIGHT),
+		Parent = container,
+	})
+
+	Prediction.Preview = CreatePreview(hero, Prediction.Theme)
+
+	Prediction.ListColumn = New("Frame", {
+		Name = "PredictorListColumn",
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(HERO_PREVIEW_WIDTH + HERO_GAP, 0),
+		Size = UDim2.new(1, -(HERO_PREVIEW_WIDTH + HERO_GAP), 0, HERO_HEIGHT),
+		Parent = hero,
+	})
+
+	local filterBar = CreateFilterBar(Prediction.ListColumn, Prediction.Theme)
+	filterBar.Size = UDim2.new(1, -SCROLLBAR_WIDTH, 0, HERO_FILTER_HEIGHT)
 
 	Prediction.ListFrame = New("ScrollingFrame", {
 		Name = "PredictorList",
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		LayoutOrder = 4,
+		Position = UDim2.fromOffset(0, HERO_FILTER_HEIGHT + 6),
 		ScrollBarThickness = 3,
 		ScrollBarImageColor3 = Prediction.Theme.Border,
 		VerticalScrollBarInset = Enum.ScrollBarInset.ScrollBar,
 		ScrollingDirection = Enum.ScrollingDirection.Y,
 		CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		Size = UDim2.new(1, -CONTAINER_PADDING * 2 - CARD_MARGIN * 2, 0, 0),
-		Parent = container,
+		Size = UDim2.new(1, 0, 0, HERO_HEIGHT - HERO_FILTER_HEIGHT - 6),
+		Parent = Prediction.ListColumn,
 	})
 
 	Prediction.Grid = New("UIGridLayout", {
@@ -1513,7 +1580,17 @@ function Prediction.Build(groupbox)
 				break
 			end
 		end
-		Prediction.Preview.Update(selectedEntry or visible[1])
+		local previewEntry = selectedEntry or visible[1]
+		local previewRank = 0
+		if previewEntry then
+			for index, entry in ipairs(visible) do
+				if entry.Id == previewEntry.Id then
+					previewRank = index
+					break
+				end
+			end
+		end
+		Prediction.Preview.Update(previewEntry, previewRank)
 	end)
 end
 

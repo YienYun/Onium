@@ -12834,6 +12834,8 @@ function Library:CreateWindow(WindowInfo)
 		local TabCanvas
 		local TabLeft
 		local TabRight
+		local TabFull
+		local FullAreaRefresh = function() end
 
 		Icon = Library:GetCustomIcon(Icon)
 		do
@@ -13064,6 +13066,64 @@ function Library:CreateWindow(WindowInfo)
 			})
 		end
 
+		local MIN_COLUMN_HEIGHT = 130
+
+		local function EnsureFullArea()
+			if TabFull then
+				return TabFull
+			end
+
+			TabFull = New("ScrollingFrame", {
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				AutomaticCanvasSize = Enum.AutomaticSize.Y,
+				CanvasSize = UDim2.fromScale(0, 0),
+				ScrollingDirection = Enum.ScrollingDirection.Y,
+				ScrollBarThickness = 2,
+				ScrollBarImageColor3 = Library.Scheme.AccentColor,
+				ScrollBarImageTransparency = 0.6,
+				Position = UDim2.fromOffset(0, 0),
+				Size = UDim2.new(1, 0, 0, 0),
+				Parent = TabContainer,
+			})
+			New("UIListLayout", {
+				Padding = UDim.new(0, 2),
+				Parent = TabFull,
+			})
+			New("UIPadding", {
+				PaddingBottom = UDim.new(0, 2),
+				PaddingLeft = UDim.new(0, 2),
+				PaddingRight = UDim.new(0, 2),
+				PaddingTop = UDim.new(0, 2),
+				Parent = TabFull,
+			})
+			TabFull:GetPropertyChangedSignal("AbsoluteCanvasSize"):Connect(function()
+				FullAreaRefresh()
+			end)
+			TabContainer:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+				FullAreaRefresh()
+			end)
+			return TabFull
+		end
+
+		local function ResolveFullAreaHeight()
+			if not TabFull then
+				return 0
+			end
+
+			local warningHeight = WarningBoxHolder.Visible and (WarningBox.Size.Y.Offset + 8) or 0
+			if math.abs(TabFull.Position.Y.Offset - warningHeight) > 0.5 then
+				TabFull.Position = UDim2.new(0, 0, 0, warningHeight)
+			end
+			local maxHeight = math.max(0, TabContainer.AbsoluteSize.Y - warningHeight - MIN_COLUMN_HEIGHT)
+			local height = math.clamp(TabFull.AbsoluteCanvasSize.Y, 0, maxHeight)
+			if math.abs(TabFull.Size.Y.Offset - height) > 0.5 then
+				TabFull.Size = UDim2.new(1, 0, 0, height)
+			end
+			TabFull.ScrollingEnabled = TabFull.AbsoluteCanvasSize.Y > height + 1
+			return height
+		end
+
 		--// Tab Table \\--
 		local Tab = {
 			Description = Description,
@@ -13164,10 +13224,15 @@ function Library:CreateWindow(WindowInfo)
 
 		function Tab:RefreshSides()
 			local Offset = WarningBoxHolder.Visible and WarningBox.Size.Y.Offset + 8 or 0
+			Offset += ResolveFullAreaHeight()
 			for _, Side in Tab.Sides do
 				Side.Position = UDim2.new(Side.Position.X.Scale, 0, 0, Offset)
 				Side.Size = UDim2.new(0.5, -3, 1, -Offset)
 			end
+		end
+
+		FullAreaRefresh = function()
+			Tab:RefreshSides()
 		end
 
 		function Tab:Resize(ResizeWarningBox: boolean?)
@@ -13542,7 +13607,7 @@ function Library:CreateWindow(WindowInfo)
 				AutomaticSize = Enum.AutomaticSize.Y,
 				BackgroundTransparency = 1,
 				Size = UDim2.fromScale(1, 0),
-				Parent = Info.Side == 1 and TabLeft or TabRight,
+				Parent = Info.Side == 0 and EnsureFullArea() or (Info.Side == 1 and TabLeft or TabRight),
 			})
 			New("UIListLayout", {
 				Padding = UDim.new(0, 6),
@@ -13869,6 +13934,17 @@ function Library:CreateWindow(WindowInfo)
 		function Tab:AddRightGroupbox(Name, IconName, Visible, Collapsed, DisableCollapsing)
 			return Tab:AddGroupbox({
 				Side = 2,
+				Name = Name,
+				IconName = IconName,
+				Visible = Visible,
+				Collapsed = Collapsed,
+				DisableCollapsing = DisableCollapsing,
+			})
+		end
+
+		function Tab:AddFullGroupbox(Name, IconName, Visible, Collapsed, DisableCollapsing)
+			return Tab:AddGroupbox({
+				Side = 0,
 				Name = Name,
 				IconName = IconName,
 				Visible = Visible,

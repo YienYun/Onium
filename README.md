@@ -171,6 +171,14 @@ Perilaku yang perlu diingat:
 - **Sync tidak menyentuh `Min Value To Find`.** Filter Auto Steal di Onium hanya zona, egg, dan rarity, jadi nilai minimum tetap milik Egg Finder. Karena dropdown rarity Onium multi-pilih sedangkan Egg Finder memakai satu batas minimum, sync rarity memakai rank terendah saat menarik dan menulis satu rarity saat mendorong (sama seperti perilaku Chili).
 - **Icon group** memakai `Hub.Icons.EggFinder` (`rbxassetid://116524274262912`, base egg milik game) karena dex tidak menyimpan icon khusus "finder". Elemen OniumV4 (dropdown/slider/toggle) tidak punya slot icon per kontrol; icon hanya ada di level tab dan groupbox.
 
+### Groupbox lebar (`Tab:AddFullGroupbox`)
+
+Library aslinya hanya punya dua kolom: `AddLeftGroupbox` dan `AddRightGroupbox` (masing-masing 50% lebar tab). `AddFullGroupbox` menambahkan area ketiga, `TabFull`, yang berada di atas kedua kolom dengan lebar penuh:
+
+- `TabFull` hanya dibuat saat sebuah tab memakai `AddFullGroupbox` pertama kali, jadi tab lain tidak berubah sama sekali.
+- Tinggi `TabFull` mengikuti isinya (`AutomaticCanvasSize`) dan dibatasi supaya dua kolom di bawahnya tetap minimal 130 px; kalau isinya lebih tinggi dari batas itu, area atas bisa digulir sendiri.
+- `Tab:RefreshSides()` menghitung ulang posisi dua kolom setiap kali tinggi area penuh berubah, ukuran tab berubah, atau warning box muncul/tertutup. Tidak ada perubahan pada tab yang tidak memakai groupbox lebar.
+
 ### Tab Predictor
 
 Tab `Predictor` dibuat sebelum `Settings` dan seluruh logikanya ada di modul terpisah `Games/StealAnEgg/Prediction.luau` supaya file hub tidak membengkak. Hub hanya membuat tab dan tiga groupbox (`Discord Webhook` lalu `Egg Predictor` di kiri, `Fuse Predictor` di kanan), lalu memanggil `PredictionModule.BuildWebhook`, `Build`, dan `BuildFuse`.
@@ -185,8 +193,15 @@ Tab `Predictor` dibuat sebelum `Settings` dan seluruh logikanya ada di modul ter
 
 Sumber data semuanya dari modul game, bukan karangan: `EggState.ReadOwnerEggs` (daftar egg), `EggState.IsReadyToHatch`, `EggRecords.GrowthSecondsRemaining` / `GrowthDuration` / `GrowthSpeedMultiplier` / `WeightKg` / `EggIcon`, `Assets.Directory` (nama, rarity, `EarningRate`, icon), dan `Mutations.EarningsFor` (multiplier mutasi). Income memakai rumus Chili: `EarningRate * ScaleFactor(scale) * MutationMultiplier`.
 
+Layout tab (sejak groupbox lebar tersedia):
+
+- `Egg Predictor` memakai `AddFullGroupbox` dan berada paling atas, isinya dua kolom: preview besar di kiri (298 px) dan daftar kartu egg di kanan.
+- Di bawahnya tetap seperti sebelumnya: `Discord Webhook` di kolom kiri (default collapsed) dan `Fuse Predictor` di kolom kanan.
+- Tombol `Show Preview Card` menyembunyikan preview dan membuat daftar memakai lebar penuh.
+
 Catatan tampilan:
 
+- Preview besar berbentuk kartu vertikal: art pet + badge egg bundar, chip `RANK n` di kiri atas, teks mutasi di kanan atas, nama (gradient rarity), pill rarity, nilai income besar, baris `size`/`weight`, dan bar status. Daftar di kanan memakai kartu kecil yang sama seperti versi sebelumnya.
 - Gambar dan teks kartu dibuat manual di modul (bukan `AddImage`/`AddSpotlightCard` bawaan library), karena kartu memerlukan art persegi, bar berisi waktu, dan teks yang bisa diberi gradient per label. Hanya kontrol `Sort By` dan `Show Preview Card` yang memakai element library.
 - Warna teks mengikuti palette Chili: income `#4DFF7A`, skala `#FFDF8A`, berat `#CDE7FF`, status Ready `#4DFF7A`, Growing `#FFC24D`, In Bag `#7FD8FF`.
 - Gradient nama dan rarity diambil dari instance game `ReplicatedStorage.Assets.UI.RarityGradients/<rarityId>/RarityGradient` (rotation + color sequence di-crop seperti Chili), dengan `SECRET` memakai sequence khusus dan fallback `Color:Lerp(white, 0.35)` bila gradient tidak tersedia.
@@ -283,7 +298,7 @@ Ganti branch cukup di `REPO_RAW`. `CACHE_BUST` menempelkan timestamp supaya CDN 
 
 ## 3. UI Library (`Library/OniumV4.luau`)
 
-Turunan library Obsidian dengan penambahan gradient, custom icon, dan theme Onium. Yang dipakai hub:
+Turunan library Obsidian dengan penambahan gradient, custom icon, theme Onium, dan groupbox selebar tab. Yang dipakai hub:
 
 ```lua
 LibraryLoader:CreateLoading{ Title, Icon, TotalSteps, CurrentStep, ShowSidebar, AutoResizeHeight }
@@ -293,6 +308,7 @@ LibraryLoader:Toggle(state)
 
 Window:AddTab(name, icon, description)
 Tab:AddLeftGroupbox(name, icon) / Tab:AddRightGroupbox(name, icon)
+Tab:AddFullGroupbox(name, icon)
 Groupbox:AddToggle(index, { Text, Default, Tooltip, Callback })
 Groupbox:AddDropdown(index, { Text, Values, Multi, Searchable, Default, Callback })
 Groupbox:AddSlider(index, { Text, Min, Max, Rounding, Default, Suffix, Callback })
