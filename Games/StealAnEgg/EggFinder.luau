@@ -95,15 +95,6 @@ local function ToNumber(rawValue, fallbackValue)
 	return fallbackValue or 0
 end
 
-local function FormatClock(seconds)
-	local totalSeconds = math.max(0, math.floor(seconds))
-	local minutes = math.floor(totalSeconds / 60)
-	if minutes >= 60 then
-		return string.format("%dh %02dm", math.floor(minutes / 60), minutes % 60)
-	end
-	return string.format("%dm %02ds", minutes, totalSeconds % 60)
-end
-
 local function SortedKeys(selectionMap)
 	local keys = {}
 	for keyValue, isSelected in pairs(selectionMap or {}) do
@@ -359,9 +350,36 @@ local function MatchesStealFilter(record)
 	return callOk and isMatch == true
 end
 
+local function PersistWindow()
+	local hubState = HubState()
+	if not hubState then
+		return
+	end
+	if EggFinder.Window > 0 and EggFinder.WindowMode then
+		hubState.EggFinderWindow = { Time = EggFinder.Window, Mode = EggFinder.WindowMode }
+	else
+		hubState.EggFinderWindow = nil
+	end
+end
+
 local function ResetWindow()
 	EggFinder.Window = 0
 	EggFinder.WindowMode = nil
+	PersistWindow()
+end
+
+local function RestoreWindow()
+	local hubState = HubState()
+	local storedWindow = hubState and hubState.EggFinderWindow or nil
+	local storedTime = type(storedWindow) == "table" and ToNumber(storedWindow.Time, 0) or 0
+	if storedTime > Workspace:GetServerTimeNow() then
+		EggFinder.Window = storedTime
+		EggFinder.WindowMode = storedWindow.Mode
+		return
+	end
+	if hubState then
+		hubState.EggFinderWindow = nil
+	end
 end
 
 local function SetHopWindow()
@@ -379,6 +397,7 @@ local function SetHopWindow()
 	end
 	EggFinder.Window = numericTime
 	EggFinder.WindowMode = EggFinder.Mode
+	PersistWindow()
 end
 
 local function WindowRemaining()
@@ -394,13 +413,6 @@ local function WindowRemaining()
 		return 0
 	end
 	return EggFinder.Window - nowTime
-end
-
-local function WithWindow(statusText, remainingSeconds)
-	if remainingSeconds <= 0 then
-		return statusText
-	end
-	return string.format("%s  |  hop run %s left", statusText, FormatClock(remainingSeconds))
 end
 
 local function SurveyField()
@@ -554,25 +566,21 @@ local function DecideStayOrHop(survey)
 		return "Night is close, staying here", false
 	end
 
-	local windowRemaining = WindowRemaining()
+	if WindowRemaining() > 0 then
+		return nil, true
+	end
 
 	if EggFinder.Mode == Modes.UntilAnEggMatches then
 		return nil, true
 	end
 
 	if EggFinder.Mode == Modes.StealThenHop then
-		if windowRemaining > 0 then
-			return WithWindow("Waiting for Auto Steal to bring home a filter egg", windowRemaining), false
+		if not autoStealOn then
+			return "Turn on Auto Steal, hopping starts after it brings home a filter egg", false
 		end
-		if autoStealOn then
-			return "Waiting for Auto Steal to bring home a filter egg", false
-		end
-		return "Turn on Auto Steal, hopping starts after it brings home a filter egg", false
+		return nil, true
 	end
 
-	if windowRemaining > 0 then
-		return WithWindow(string.format("Waiting for a %s egg to spawn here", EggFinder.RareLabel), windowRemaining), false
-	end
 	return string.format("Waiting for a %s egg to spawn here", EggFinder.RareLabel), false
 end
 
@@ -682,6 +690,7 @@ function EggFinder.Build(groupbox)
 	end
 
 	EggFinder.Applying = true
+	RestoreWindow()
 
 	local engine = EngineApi()
 	EggFinder.DeliverySerial = engine and ToNumber(engine.AutoDeliverySerial, 0) or 0
