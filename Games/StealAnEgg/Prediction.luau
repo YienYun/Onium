@@ -663,6 +663,7 @@ local GRID_GAP = 6
 local MIN_CARD_WIDTH = 72
 local CARD_MARGIN = 2
 local LIST_COLUMNS = 3
+local STACK_MIN_WIDTH = 420
 local SHIMMER_SPEED = 0.9
 local SHIMMER_ROTATION = 45
 local SURFACE_SPEED = 0.3
@@ -1933,17 +1934,43 @@ function Prediction.LayoutHero()
 		return
 	end
 
-	local previewWidth = math.clamp(math.floor(heroWidth * 0.32), HERO_MIN_WIDTH, HERO_MAX_WIDTH)
+	local showPreview = Prediction.PreviewVisible
+	local stacked = heroWidth < STACK_MIN_WIDTH
+	local previewWidth
+	if stacked then
+		previewWidth = math.min(heroWidth, HERO_MAX_WIDTH)
+	else
+		previewWidth = math.clamp(math.floor(heroWidth * 0.32), HERO_MIN_WIDTH, HERO_MAX_WIDTH)
+	end
+
 	if previewWidth ~= Prediction.PreviewWidth then
 		Prediction.PreviewWidth = previewWidth
 		preview.Resize(previewWidth)
 	end
 
-	local showPreview = Prediction.PreviewVisible
 	preview.Frame.Visible = showPreview
-	local offset = showPreview and (previewWidth + HERO_GAP) or 0
-	column.Position = UDim2.fromOffset(offset, 0)
-	column.Size = UDim2.new(1, -offset, 0, HERO_HEIGHT)
+
+	local heroHeight = HERO_HEIGHT
+	if stacked then
+		local top = showPreview and (HERO_HEIGHT + HERO_GAP) or 0
+		preview.Frame.Position = UDim2.fromOffset(math.floor((heroWidth - previewWidth) / 2), 0)
+		column.Position = UDim2.fromOffset(0, top)
+		column.Size = UDim2.new(1, 0, 0, HERO_HEIGHT)
+		heroHeight = top + HERO_HEIGHT
+	else
+		local offset = showPreview and (previewWidth + HERO_GAP) or 0
+		preview.Frame.Position = UDim2.fromOffset(0, 0)
+		column.Position = UDim2.fromOffset(offset, 0)
+		column.Size = UDim2.new(1, -offset, 0, HERO_HEIGHT)
+	end
+
+	if Prediction.HeroHeight ~= heroHeight then
+		Prediction.HeroHeight = heroHeight
+		hero.Size = UDim2.new(1, -CONTAINER_PADDING * 2, 0, heroHeight)
+		if Prediction.Groupbox then
+			Prediction.Groupbox:Resize()
+		end
+	end
 end
 
 function Prediction.SetCardVisible(visible)
@@ -2378,6 +2405,19 @@ local function CreateFusePreview(parent, theme)
 		}),
 	})
 
+	local artGlow = New("ImageLabel", {
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(1.3, 1.3),
+		Image = PREVIEW_SHADOW_ASSET,
+		ImageColor3 = COLORS.Text,
+		ImageTransparency = 0.5,
+		ScaleType = Enum.ScaleType.Stretch,
+		ZIndex = 1,
+		Parent = art,
+	})
+
 	local eggShadow = New("ImageLabel", {
 		BackgroundTransparency = 1,
 		AnchorPoint = Vector2.new(0.5, 0.5),
@@ -2446,11 +2486,15 @@ local function CreateFusePreview(parent, theme)
 		TextColor3 = COLORS.Subtext,
 	})
 
+	AddTextStroke(nameLabel, SHADE, 2, 0.05)
+
 	local rarityLabel = CreateLabel(body, {
 		Position = UDim2.fromOffset(0, 24),
 		Size = UDim2.new(1, 0, 0, 12),
 		TextSize = 9,
 	})
+
+	AddTextStroke(rarityLabel, SHADE, 1.6, 0.1)
 
 	local mutationLabel = CreateLabel(body, {
 		Position = UDim2.fromOffset(0, 36),
@@ -2465,6 +2509,7 @@ local function CreateFusePreview(parent, theme)
 		TextSize = 16,
 	})
 	PaintGradient(valueLabel, "TextPaint", ColorSequence.new(COLORS.IncomeTop, COLORS.IncomeBottom), 90)
+	AddTextStroke(valueLabel, SHADE, 1.8, 0.1)
 
 	local statsRow = New("Frame", {
 		BackgroundTransparency = 1,
@@ -2523,12 +2568,18 @@ local function CreateFusePreview(parent, theme)
 
 			if assetInfo then
 				PaintGradient(art, "RarityPaint", BuildArtSequence(assetInfo), 90)
+				PaintSurface(frame, assetInfo, NumberSequence.new(0), false)
+				artGlow.ImageColor3 = assetInfo.RarityColor
+				artGlow.ImageTransparency = 0.32
 				nameLabel.Text = assetInfo.Name
 				PaintRarityText(nameLabel, assetInfo, true)
 				rarityLabel.Text = string.upper(assetInfo.Rarity)
 				PaintRarityText(rarityLabel, assetInfo, false)
 			else
 				PaintGradient(art, "RarityPaint", ColorSequence.new(theme.Surface, theme.Surface), 90)
+				PaintGradient(frame, "SurfacePaint", ColorSequence.new(theme.Surface, theme.Surface), 90)
+				artGlow.ImageColor3 = COLORS.Text
+				artGlow.ImageTransparency = 0.5
 				nameLabel.Text = "No fusion"
 				nameLabel.TextColor3 = COLORS.Subtext
 				rarityLabel.Text = ""

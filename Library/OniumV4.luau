@@ -12834,7 +12834,6 @@ function Library:CreateWindow(WindowInfo)
 		local TabCanvas
 		local TabLeft
 		local TabRight
-		local TabFull
 
 		Icon = Library:GetCustomIcon(Icon)
 		do
@@ -13065,67 +13064,6 @@ function Library:CreateWindow(WindowInfo)
 			})
 		end
 
-		local function EnsureFullArea()
-			if TabFull then
-				return TabFull
-			end
-
-			TabFull = New("ScrollingFrame", {
-				BackgroundTransparency = 1,
-				BorderSizePixel = 0,
-				AutomaticCanvasSize = Enum.AutomaticSize.Y,
-				CanvasSize = UDim2.fromScale(0, 0),
-				ScrollingDirection = Enum.ScrollingDirection.Y,
-				ScrollBarThickness = 2,
-				ScrollBarImageColor3 = Library.Scheme.AccentColor,
-				ScrollBarImageTransparency = 0.6,
-				Position = UDim2.fromOffset(0, 0),
-				Size = UDim2.fromScale(1, 1),
-				Parent = TabContainer,
-			})
-			New("UIListLayout", {
-				Padding = UDim.new(0, 2),
-				Parent = TabFull,
-			})
-			New("UIPadding", {
-				PaddingBottom = UDim.new(0, 2),
-				PaddingLeft = UDim.new(0, 2),
-				PaddingRight = UDim.new(0, 2),
-				PaddingTop = UDim.new(0, 2),
-				Parent = TabFull,
-			})
-
-			local SideRow = New("Frame", {
-				AutomaticSize = Enum.AutomaticSize.Y,
-				BackgroundTransparency = 1,
-				BorderSizePixel = 0,
-				LayoutOrder = 1000,
-				Size = UDim2.fromScale(1, 0),
-				Parent = TabFull,
-			})
-
-			for _, Side in ipairs({ TabLeft, TabRight }) do
-				Side.AutomaticSize = Enum.AutomaticSize.Y
-				Side.AutomaticCanvasSize = Enum.AutomaticSize.None
-				Side.CanvasSize = UDim2.fromScale(0, 0)
-				Side.ScrollBarThickness = 0
-				Side.ScrollingEnabled = false
-				Side.Size = UDim2.new(0.5, -3, 0, 0)
-				Side.Parent = SideRow
-			end
-			TabLeft.Position = UDim2.fromOffset(0, 0)
-			TabRight.AnchorPoint = Vector2.new(1, 0)
-			TabRight.Position = UDim2.fromScale(1, 0)
-
-			return TabFull
-		end
-
-		local function ResolveFullArea()
-			local warningHeight = WarningBoxHolder.Visible and (WarningBox.Size.Y.Offset + 8) or 0
-			TabFull.Position = UDim2.new(0, 0, 0, warningHeight)
-			TabFull.Size = UDim2.new(1, 0, 1, -warningHeight)
-		end
-
 		--// Tab Table \\--
 		local Tab = {
 			Description = Description,
@@ -13225,10 +13163,6 @@ function Library:CreateWindow(WindowInfo)
 		end
 
 		function Tab:RefreshSides()
-			if TabFull then
-				ResolveFullArea()
-				return
-			end
 			local Offset = WarningBoxHolder.Visible and WarningBox.Size.Y.Offset + 8 or 0
 			for _, Side in Tab.Sides do
 				Side.Position = UDim2.new(Side.Position.X.Scale, 0, 0, Offset)
@@ -13608,7 +13542,7 @@ function Library:CreateWindow(WindowInfo)
 				AutomaticSize = Enum.AutomaticSize.Y,
 				BackgroundTransparency = 1,
 				Size = UDim2.fromScale(1, 0),
-				Parent = Info.Side == 0 and EnsureFullArea() or (Info.Side == 1 and TabLeft or TabRight),
+				Parent = Info.Side == 1 and TabLeft or TabRight,
 			})
 			New("UIListLayout", {
 				Padding = UDim.new(0, 6),
@@ -13935,17 +13869,6 @@ function Library:CreateWindow(WindowInfo)
 		function Tab:AddRightGroupbox(Name, IconName, Visible, Collapsed, DisableCollapsing)
 			return Tab:AddGroupbox({
 				Side = 2,
-				Name = Name,
-				IconName = IconName,
-				Visible = Visible,
-				Collapsed = Collapsed,
-				DisableCollapsing = DisableCollapsing,
-			})
-		end
-
-		function Tab:AddFullGroupbox(Name, IconName, Visible, Collapsed, DisableCollapsing)
-			return Tab:AddGroupbox({
-				Side = 0,
 				Name = Name,
 				IconName = IconName,
 				Visible = Visible,
