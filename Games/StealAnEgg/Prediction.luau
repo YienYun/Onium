@@ -572,6 +572,56 @@ local function BuildArtSequence(entry)
 	return ColorSequence.new(keypoints)
 end
 
+local function Luminance(color)
+	return color.R * 0.299 + color.G * 0.587 + color.B * 0.114
+end
+
+local SURFACE_SEQUENCE_CACHE = {}
+
+local function BuildSurfaceSequence(entry)
+	local rarity = string.upper(tostring(entry.Rarity))
+	if rarity == "SECRET" then
+		return SECRET_SEQUENCE
+	elseif rarity == "ETERNAL" then
+		return ETERNAL_SEQUENCE
+	end
+
+	local key = tostring(entry.RarityId or entry.Rarity or "Common")
+	local cached = SURFACE_SEQUENCE_CACHE[key]
+	if cached then
+		return cached
+	end
+
+	local bright = {}
+	for _, keypoint in ipairs(ReadRaritySequence(entry).Keypoints) do
+		if Luminance(keypoint.Value) >= 0.45 then
+			table.insert(bright, keypoint.Value)
+		end
+	end
+	if #bright == 0 then
+		table.insert(bright, entry.RarityColor or FALLBACK_RARITY_COLOR)
+	end
+
+	local count = math.min(#bright, 8)
+	local samples = {}
+	for index = 1, count do
+		local source = bright[math.clamp(math.floor((index - 1) * (#bright - 1) / math.max(count - 1, 1) + 1.5), 1, #bright)]
+		table.insert(samples, source:Lerp(COLORS.Text, 0.36))
+	end
+	if #samples == 1 then
+		table.insert(samples, samples[1])
+	end
+
+	local keypoints = {}
+	for index, color in ipairs(samples) do
+		table.insert(keypoints, ColorSequenceKeypoint.new((index - 1) / (#samples - 1), color))
+	end
+
+	local built = ColorSequence.new(keypoints)
+	SURFACE_SEQUENCE_CACHE[key] = built
+	return built
+end
+
 local DARK_INK = Color3.fromRGB(46, 32, 14)
 local PILL_LIGHT = Color3.fromRGB(250, 246, 232)
 local PILL_DARK = Color3.fromRGB(18, 16, 24)
@@ -612,7 +662,7 @@ local SCROLLBAR_WIDTH = 4
 local GRID_GAP = 6
 local MIN_CARD_WIDTH = 72
 local CARD_MARGIN = 2
-local LIST_COLUMNS = 4
+local LIST_COLUMNS = 3
 local SHIMMER_SPEED = 0.9
 local SHIMMER_ROTATION = 45
 local SURFACE_SPEED = 0.3
@@ -662,127 +712,58 @@ local function PruneShimmers()
 	end
 end
 
-local SURFACE_CACHE = {}
+local STYLE_CACHE = {}
 
 local function ReadSurfaceStyle(entry)
 	local rarityId = tostring(entry.RarityId or entry.Rarity or "Common")
-	local cached = SURFACE_CACHE[rarityId]
+	local cached = STYLE_CACHE[rarityId]
 	if cached then
 		return cached
 	end
 
 	local style = {
-		Gradient = entry.Gradient,
-		FallbackColor = entry.RarityColor or FALLBACK_RARITY_COLOR,
-		Background = COLORS.Text,
 		Corner = UDim.new(0, 10),
-		StrokeColor = nil,
-		StrokeThickness = nil,
-		StrokeTransparency = nil,
+		StrokeColor = SHADE,
+		StrokeThickness = 1.2,
 		StrokeGradient = nil,
-		Layers = {},
 	}
 
-	local root = ReadRarityRoot(rarityId)
-	if root then
-		local gradient = ReadRarityGradient(rarityId)
-		if gradient then
-			style.Gradient = gradient
-		end
-
-		local template = root
-		if not template:IsA("GuiObject") then
-			template = root:FindFirstChild("ItemTemplate")
-		end
-
-		if template and template:IsA("GuiObject") then
-			style.Background = template.BackgroundColor3
-			local templateGradient = template:FindFirstChildWhichIsA("UIGradient")
-			if templateGradient then
-				style.Gradient = templateGradient
-			end
-			local corner = template:FindFirstChildOfClass("UICorner")
-			if corner then
-				style.Corner = corner.CornerRadius
-			end
-			for _, child in ipairs(template:GetChildren()) do
-				if child:IsA("ImageLabel") and child.Name ~= "Icon" and child.Size.X.Scale >= 0.8 and child.Size.Y.Scale >= 0.8 then
-					table.insert(style.Layers, {
-						Image = child.Image,
-						Color = child.ImageColor3,
-						Transparency = child.ImageTransparency,
-						ScaleType = child.ScaleType,
-						Rotation = child.Rotation,
-					})
-				end
-			end
-
-			local stroke = template:FindFirstChildOfClass("UIStroke")
-			if stroke then
-				style.StrokeColor = stroke.Color
-				style.StrokeThickness = stroke.Thickness
-				style.StrokeTransparency = stroke.Transparency
-				local strokeGradient = stroke:FindFirstChildOfClass("UIGradient")
-				if strokeGradient then
-					style.StrokeGradient = strokeGradient
-				end
-			end
-		end
+	local template = ReadRarityRoot(rarityId)
+	if template and not template:IsA("GuiObject") then
+		template = template:FindFirstChild("ItemTemplate")
 	end
 
-	if style.Gradient then
-		SURFACE_CACHE[rarityId] = style
+	if template and template:IsA("GuiObject") then
+		local corner = template:FindFirstChildOfClass("UICorner")
+		if corner then
+			style.Corner = corner.CornerRadius
+		end
+
+		local stroke = template:FindFirstChildOfClass("UIStroke")
+		if stroke then
+			style.StrokeColor = stroke.Color
+			style.StrokeThickness = stroke.Thickness
+			style.StrokeGradient = stroke:FindFirstChildOfClass("UIGradient")
+		end
+
+		STYLE_CACHE[rarityId] = style
 	end
 
 	return style
 end
 
 local function PaintSurface(target, entry, transparency, animate, phase)
-	local style = ReadSurfaceStyle(entry)
 	local gradient = target:FindFirstChild("SurfacePaint")
 	if not gradient then
 		gradient = New("UIGradient", { Name = "SurfacePaint", Parent = target })
 	end
 
-	target.BackgroundColor3 = style.Background
-
-	local source = style.Gradient
-
-	if source then
-		gradient.Color = source.Color
-		gradient.Rotation = source.Rotation
-		gradient.Offset = source.Offset
-		gradient.Transparency = transparency or source.Transparency
-	else
-		gradient.Color = ColorSequence.new(style.FallbackColor, style.FallbackColor:Lerp(COLORS.Text, 0.25))
-		gradient.Rotation = 90
-		gradient.Offset = Vector2.zero
-		gradient.Transparency = transparency or NumberSequence.new(0)
-	end
-
+	target.BackgroundColor3 = COLORS.Text
+	gradient.Color = BuildSurfaceSequence(entry)
 	gradient.Enabled = true
-
-	for index, layer in ipairs(style.Layers) do
-		local name = "SurfaceLayer" .. index
-		local image = target:FindFirstChild(name)
-		if not image then
-			image = New("ImageLabel", {
-				BackgroundTransparency = 1,
-				BorderSizePixel = 0,
-				Name = name,
-				Position = UDim2.fromScale(0, 0),
-				Size = UDim2.fromScale(1, 1),
-				ZIndex = 0,
-				Parent = target,
-			})
-		end
-		image.Image = layer.Image
-		image.ImageColor3 = layer.Color
-		image.ImageTransparency = layer.Transparency
-		image.ScaleType = layer.ScaleType
-		image.Rotation = layer.Rotation
-	end
-
+	gradient.Rotation = 90
+	gradient.Offset = Vector2.zero
+	gradient.Transparency = transparency or NumberSequence.new(0)
 	gradient:SetAttribute("SurfaceBase", gradient.Offset)
 	gradient:SetAttribute("SurfacePhase", phase or 0)
 
@@ -1313,8 +1294,8 @@ local function CreateCard(parent, entry, metrics, index, theme)
 			ZIndex = 4,
 		}),
 		SHADE,
-		1.2,
-		0.3
+		1.6,
+		0.1
 	)
 	UseDisplayFont(timeLabel)
 
@@ -1329,8 +1310,8 @@ local function CreateCard(parent, entry, metrics, index, theme)
 			ZIndex = 4,
 		}),
 		SHADE,
-		1.2,
-		0.3
+		1.6,
+		0.1
 	)
 	UseDisplayFont(scaleLabel)
 
@@ -1345,7 +1326,7 @@ local function CreateCard(parent, entry, metrics, index, theme)
 	})
 	UseDisplayFont(nameLabel)
 	PaintRarityText(nameLabel, entry, true)
-	AddTextStroke(nameLabel, SHADE, 1.8, 0.1)
+	AddTextStroke(nameLabel, SHADE, 2.2, 0.05)
 
 	local rarityLabel = CreateLabel(card, {
 		Position = UDim2.fromOffset(metrics.Inset, metrics.RarityY),
@@ -1356,7 +1337,7 @@ local function CreateCard(parent, entry, metrics, index, theme)
 		ZIndex = 4,
 	})
 	UseDisplayFont(rarityLabel)
-	rarityLabel.TextColor3 = entry.RarityColor
+	PaintRarityText(rarityLabel, entry, false)
 	AddTextStroke(rarityLabel, SHADE, 2, 0.05)
 
 	local valueLabel = CreateLabel(card, {
@@ -1567,13 +1548,13 @@ local function CreatePreview(parent, theme)
 		ZIndex = 4,
 	})
 	UseDisplayFont(nameLabel)
-	AddTextStroke(nameLabel, SHADE, 1.8, 0.15)
+	AddTextStroke(nameLabel, SHADE, 2.4, 0.05)
 
 	local rarityChip = New("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0),
 		AutomaticSize = Enum.AutomaticSize.X,
 		BackgroundColor3 = PILL_DARK,
-		BackgroundTransparency = 0.82,
+		BackgroundTransparency = 0.35,
 		BorderSizePixel = 0,
 		Position = UDim2.new(0.5, 0, 0, 202),
 		Size = UDim2.new(0, 0, 0, 23),
@@ -1742,7 +1723,7 @@ local function CreatePreview(parent, theme)
 			PaintRarityText(nameLabel, entry, true)
 			rarityChip.Visible = true
 			rarityLabel.Text = string.upper(entry.Rarity)
-			rarityLabel.TextColor3 = entry.RarityColor
+			PaintRarityText(rarityLabel, entry, false)
 			PaintGradient(rarityStroke, "BorderPaint", ReadRaritySequence(entry), 90)
 		end
 
