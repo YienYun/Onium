@@ -1138,6 +1138,7 @@ local function CreateCard(parent, entry, metrics, index, theme)
 		end,
 	}
 end
+
 local function CreateChip(parent, position, anchorX, textSize)
 	local chip = New("Frame", {
 		BackgroundColor3 = PILL_LIGHT,
