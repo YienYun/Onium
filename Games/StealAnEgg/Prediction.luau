@@ -2418,6 +2418,19 @@ local function CreateFusePreview(parent, theme)
 		Parent = art,
 	})
 
+	local artRays = New("ImageLabel", {
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.46),
+		Size = UDim2.fromScale(1.7, 1.7),
+		Image = PREVIEW_RAYS_ASSET,
+		ImageColor3 = COLORS.Text,
+		ImageTransparency = 0.62,
+		ScaleType = Enum.ScaleType.Fit,
+		ZIndex = 1,
+		Parent = art,
+	})
+
 	local eggShadow = New("ImageLabel", {
 		BackgroundTransparency = 1,
 		AnchorPoint = Vector2.new(0.5, 0.5),
@@ -2571,6 +2584,8 @@ local function CreateFusePreview(parent, theme)
 				PaintSurface(frame, assetInfo, NumberSequence.new(0), false)
 				artGlow.ImageColor3 = assetInfo.RarityColor
 				artGlow.ImageTransparency = 0.32
+				artRays.ImageColor3 = assetInfo.RarityColor:Lerp(COLORS.Text, 0.45)
+				artRays.ImageTransparency = 0.45
 				nameLabel.Text = assetInfo.Name
 				PaintRarityText(nameLabel, assetInfo, true)
 				rarityLabel.Text = string.upper(assetInfo.Rarity)
@@ -2580,6 +2595,8 @@ local function CreateFusePreview(parent, theme)
 				PaintGradient(frame, "SurfacePaint", ColorSequence.new(theme.Surface, theme.Surface), 90)
 				artGlow.ImageColor3 = COLORS.Text
 				artGlow.ImageTransparency = 0.5
+				artRays.ImageColor3 = COLORS.Text
+				artRays.ImageTransparency = 0.72
 				nameLabel.Text = "No fusion"
 				nameLabel.TextColor3 = COLORS.Subtext
 				rarityLabel.Text = ""
