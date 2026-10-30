@@ -5820,8 +5820,6 @@ local CARRY_LIFT_TOLERANCE = 2
 local CARRY_Z_EASE = 0.03
 local CARRY_Z_EASE_LIMIT = 0.3
 local CARRY_WALK_SCALE = 0.95
-local CARRY_Z_MIN = -415
-local CARRY_Z_MAX = -305
 local CARRY_Z_CENTER = -382
 local CARRY_DROP_GAP_X = 15.4
 local CARRY_DROP_HEIGHT = 70.6
@@ -6302,9 +6300,7 @@ end
 
 local function DropPoint()
 	local separation = SeparationPosition()
-	local root = GetRoot()
-	local z = root and math.clamp(root.Position.Z, CARRY_Z_MIN, CARRY_Z_MAX) or CARRY_Z_CENTER
-	return Vector3.new(separation.X + CARRY_DROP_GAP_X, CARRY_DROP_HEIGHT, z)
+	return Vector3.new(separation.X + CARRY_DROP_GAP_X, CARRY_DROP_HEIGHT, CARRY_Z_CENTER)
 end
 
 local function EntryPoint()
