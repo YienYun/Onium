@@ -314,6 +314,7 @@ local FarmConfig = {
 	TweenSpeed = 600,
 	AutoTweenSpeed = 400,
 	FastTweenSpeed = 3300,
+	CarryVariant = "V2 - Chili Legs",
 	SelectedZones = {},
 	SelectedEggs = {},
 	SelectedRarities = {},
@@ -492,6 +493,18 @@ local StealPriorityOptions = {
 local StealMethodOptions = {
 	"Walk",
 	"Fast Tween",
+}
+
+local CarryVariants = {
+	FastGlide = "V1 - Fast Glide",
+	ChiliLegs = "V2 - Chili Legs",
+	ChiliSingle = "V3 - Chili Single",
+}
+
+local CarryVariantOptions = {
+	CarryVariants.FastGlide,
+	CarryVariants.ChiliLegs,
+	CarryVariants.ChiliSingle,
 }
 
 local PlaceRuleOptions = {
@@ -3273,7 +3286,9 @@ do
 		return IsCarriedByMe(eggUid)
 	end
 
-	local function CarryHome(cycle, eggUid, dropTargetCF)
+	local CARRY_DROP_LIMIT = 4
+
+	local function CarryHome(cycle, eggUid, dropTargetCF, dropPerLeg)
 		local startPos = cycle.Root.Position
 		local targetPos = dropTargetCF.Position
 		local legCount = CarryLegCount(cycle)
@@ -3306,10 +3321,13 @@ do
 
 			if legPositionsX[legIndex] and currentPos.X <= legPositionsX[legIndex] then
 				legIndex += 1
-				CarrySetCFrame(cycle, CFrame.new(currentPos.X, carryY, currentPos.Z) * CARRY_ROTATION)
-				task.wait(0.1)
-				if not DropAndRegrab(cycle, eggUid) then
-					return false
+				if dropPerLeg and (cycle.CarryDrops or 0) < CARRY_DROP_LIMIT then
+					cycle.CarryDrops = (cycle.CarryDrops or 0) + 1
+					CarrySetCFrame(cycle, CFrame.new(currentPos.X, carryY, currentPos.Z) * CARRY_ROTATION)
+					task.wait(0.1)
+					if not DropAndRegrab(cycle, eggUid) then
+						return false
+					end
 				end
 				continue
 			end
@@ -3350,13 +3368,24 @@ do
 			SetCycleStatus(cycle, "Bringing egg home")
 			cycle.DeliveryDropUid = eggUid
 			local dropTarget = GetDropPoint(cycle)
-			CarryHome(cycle, eggUid, dropTarget)
-			if not IsCycleCurrent(cycle) then
-				return false
+			if (cycle.Root.Position - dropTarget.Position).Magnitude > CARRY_STOP_DISTANCE then
+				local variant = FarmConfig.CarryVariant
+				if variant == CarryVariants.ChiliLegs then
+					CarryHome(cycle, eggUid, dropTarget, true)
+				elseif variant == CarryVariants.ChiliSingle then
+					CarryHome(cycle, eggUid, dropTarget, false)
+				else
+					Glide(cycle, dropTarget, function()
+						return not IsCarriedByMe(eggUid)
+					end)
+				end
+				if not IsCycleCurrent(cycle) then
+					return false
+				end
 			end
 
 			local dropConfirmed = false
-			for _ = 1, 3 do
+			for _ = 1, 2 do
 				if not IsCycleCurrent(cycle) or not IsCarriedByMe(eggUid) then
 					break
 				end
@@ -13133,6 +13162,18 @@ function Hub.Features.BuildFarmEggs(farmGroup)
 		Callback = function(selectedMethod)
 			if selectedMethod == "Walk" or selectedMethod == "Fast Tween" then
 				FarmConfig.StealMethod = selectedMethod
+			end
+		end,
+	})
+
+	farmGroup:AddDropdown("Dropdown_CarryVariant", {
+		Text = "Delivery Logic",
+		Values = CarryVariantOptions,
+		Default = 2,
+		Tooltip = "Fast Tween carry test variants: V1 fast glide, V2 chili legs, V3 chili single drop",
+		Callback = function(selectedVariant)
+			if type(selectedVariant) == "string" and selectedVariant ~= "" then
+				FarmConfig.CarryVariant = selectedVariant
 			end
 		end,
 	})
