@@ -3253,26 +3253,24 @@ do
 			pcall(EggStateModule.DropFieldEgg, "PlayerRequest")
 		end
 
-		local dropDeadline = os.clock() + 1.5
-		while IsCycleCurrent(cycle) and os.clock() < dropDeadline do
+		local snapped, tries = false, 0
+		local grabDeadline = os.clock() + 2
+		while IsCycleCurrent(cycle) and os.clock() < grabDeadline do
 			if IsCarriedByMe(eggUid) then
-				break
+				return true
 			end
 			local eggRecord = ReadEgg(eggUid)
-			if eggRecord and eggRecord.State == eggStates.Dropped then
+			if not snapped and eggRecord and eggRecord.State == eggStates.Dropped then
+				snapped = true
 				SnapToDroppedEgg(cycle, eggUid)
-				break
 			end
-			if not eggRecord or eggRecord.State == eggStates.Claimed then
-				break
+			if tries < CARRY_REGRAB_TRIES then
+				tries += 1
+				RequestCarry(cycle, eggUid)
 			end
 			task.wait(0.03)
 		end
-		if not IsCycleCurrent(cycle) then
-			return false
-		end
-
-		return WaitRegrabbed(cycle, eggUid, 1.5)
+		return IsCarriedByMe(eggUid)
 	end
 
 	local function CarryHome(cycle, eggUid, dropTargetCF)
