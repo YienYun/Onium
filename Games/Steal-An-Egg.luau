@@ -308,13 +308,14 @@ local FarmConfig = {
 	AutoStealEnabled = false,
 	AutoStealAll = false,
 	StealAllMode = false,
-	StealMethod = "Fast Tween",
+	StealMethod = "Teleport",
 	SafeZoneVisual = false,
 	Defense_AntiRagdoll = true,
 	TweenSpeed = 600,
 	AutoTweenSpeed = 400,
 	FastTweenSpeed = 3300,
-	CarryVariant = "V2 - Chili Legs",
+	DeliveryMethod = "Fast Tween V2",
+	DeliverySteps = 3,
 	SelectedZones = {},
 	SelectedEggs = {},
 	SelectedRarities = {},
@@ -492,19 +493,19 @@ local StealPriorityOptions = {
 
 local StealMethodOptions = {
 	"Walk",
-	"Fast Tween",
+	"Teleport",
 }
 
-local CarryVariants = {
-	FastGlide = "V1 - Fast Glide",
-	ChiliLegs = "V2 - Chili Legs",
-	ChiliSingle = "V3 - Chili Single",
-}
+local DeliveryFastV1 = "Fast Tween V1"
+local DeliveryFastV2 = "Fast Tween V2"
+local DeliveryInstantSteps = "Instant Steps"
+local DeliveryWalk = "Walk"
 
-local CarryVariantOptions = {
-	CarryVariants.FastGlide,
-	CarryVariants.ChiliLegs,
-	CarryVariants.ChiliSingle,
+local DeliveryMethodOptions = {
+	DeliveryFastV1,
+	DeliveryFastV2,
+	DeliveryInstantSteps,
+	DeliveryWalk,
 }
 
 local PlaceRuleOptions = {
@@ -3288,7 +3289,48 @@ do
 
 	local CARRY_DROP_LIMIT = 4
 
-	local function CarryHome(cycle, eggUid, dropTargetCF, dropPerLeg)
+	local function CarrySteps(cycle, eggUid, dropTargetCF)
+		local stepCount = math.clamp(tonumber(FarmConfig.DeliverySteps) or 3, 1, 6)
+		local startPos = cycle.Root.Position
+		local targetPos = dropTargetCF.Position
+		local carryY = math.max(startPos.Y, targetPos.Y)
+
+		cycle.ArrivalHold = nil
+		cycle.UseHoverPad = false
+		if cycle.HoverPad then
+			cycle.HoverPad:Destroy()
+			cycle.HoverPad = nil
+		end
+		cycle.Humanoid.AutoRotate = false
+
+		for index = 1, stepCount do
+			if not IsCycleCurrent(cycle) or not IsCarriedByMe(eggUid) then
+				return false
+			end
+			if not WaitForGuardClear(cycle) then
+				return false
+			end
+			local share = index / stepCount
+			local stepPos = Vector3.new(
+				startPos.X + (targetPos.X - startPos.X) * share,
+				carryY,
+				startPos.Z + (targetPos.Z - startPos.Z) * share
+			)
+			CarrySetCFrame(cycle, CFrame.new(stepPos) * CARRY_ROTATION)
+			if (cycle.CarryDrops or 0) < CARRY_DROP_LIMIT then
+				cycle.CarryDrops = (cycle.CarryDrops or 0) + 1
+				task.wait(0.1)
+				if not DropAndRegrab(cycle, eggUid) then
+					return false
+				end
+			end
+			task.wait(0.05)
+		end
+
+		return IsCycleCurrent(cycle) and IsCarriedByMe(eggUid)
+	end
+
+	local function CarryHome(cycle, eggUid, dropTargetCF)
 		local startPos = cycle.Root.Position
 		local targetPos = dropTargetCF.Position
 		local legCount = CarryLegCount(cycle)
@@ -3321,7 +3363,7 @@ do
 
 			if legPositionsX[legIndex] and currentPos.X <= legPositionsX[legIndex] then
 				legIndex += 1
-				if dropPerLeg and (cycle.CarryDrops or 0) < CARRY_DROP_LIMIT then
+				if (cycle.CarryDrops or 0) < CARRY_DROP_LIMIT then
 					cycle.CarryDrops = (cycle.CarryDrops or 0) + 1
 					CarrySetCFrame(cycle, CFrame.new(currentPos.X, carryY, currentPos.Z) * CARRY_ROTATION)
 					task.wait(0.1)
@@ -3369,11 +3411,11 @@ do
 			cycle.DeliveryDropUid = eggUid
 			local dropTarget = GetDropPoint(cycle)
 			if (cycle.Root.Position - dropTarget.Position).Magnitude > CARRY_STOP_DISTANCE then
-				local variant = FarmConfig.CarryVariant
-				if variant == CarryVariants.ChiliLegs then
-					CarryHome(cycle, eggUid, dropTarget, true)
-				elseif variant == CarryVariants.ChiliSingle then
-					CarryHome(cycle, eggUid, dropTarget, false)
+				local delivery = FarmConfig.DeliveryMethod
+				if delivery == DeliveryFastV2 then
+					CarryHome(cycle, eggUid, dropTarget)
+				elseif delivery == DeliveryInstantSteps then
+					CarrySteps(cycle, eggUid, dropTarget)
 				else
 					Glide(cycle, dropTarget, function()
 						return not IsCarriedByMe(eggUid)
@@ -3521,8 +3563,7 @@ do
 			cycle.ReturnDeadline = math.max(cycle.ReturnDeadline or 0, os.clock() + 60)
 
 			while IsCycleCurrent(cycle) and IsCarriedByMe(eggUid) do
-				-- Allow immediate live switching if user changes Steal Method to Fast Tween mid-walk
-				if FarmConfig.StealMethod ~= "Walk" then
+				if FarmConfig.DeliveryMethod ~= DeliveryWalk then
 					cycle.Humanoid:MoveTo(cycle.Root.Position)
 					cycle.Humanoid:Move(Vector3.zero, false)
 					return DeliverSenaEgg(cycle, eggUid)
@@ -3732,9 +3773,9 @@ do
 
 		-- Keep recovering and delivering THIS carried/dropped egg until confirmed in inventory
 		local walkEstimate = (cycle.Root.Position - safePosition).Magnitude / math.max(tonumber(cycle.Humanoid.WalkSpeed) or 16, 8)
-		cycle.ReturnDeadline = os.clock() + ((FarmConfig.StealMethod == "Walk") and math.max(90, walkEstimate * 2.5 + 45) or 60)
+		cycle.ReturnDeadline = os.clock() + ((FarmConfig.DeliveryMethod == DeliveryWalk) and math.max(90, walkEstimate * 2.5 + 45) or 60)
 		while IsCycleCurrent(cycle) do
-			local deliveredOk = (FarmConfig.StealMethod == "Walk")
+			local deliveredOk = (FarmConfig.DeliveryMethod == DeliveryWalk)
 				and DeliverWalkEgg(cycle, eggUid)
 				or DeliverSenaEgg(cycle, eggUid)
 			if deliveredOk then
@@ -13160,21 +13201,36 @@ function Hub.Features.BuildFarmEggs(farmGroup)
 		Values = StealMethodOptions,
 		Default = 2,
 		Callback = function(selectedMethod)
-			if selectedMethod == "Walk" or selectedMethod == "Fast Tween" then
+			if selectedMethod == "Walk" or selectedMethod == "Teleport" then
 				FarmConfig.StealMethod = selectedMethod
 			end
 		end,
 	})
 
-	farmGroup:AddDropdown("Dropdown_CarryVariant", {
-		Text = "Delivery Logic",
-		Values = CarryVariantOptions,
+	farmGroup:AddDropdown("Dropdown_DeliveryMethod", {
+		Text = "Delivery Method",
+		Values = DeliveryMethodOptions,
 		Default = 2,
-		Tooltip = "Fast Tween carry test variants: V1 fast glide, V2 chili legs, V3 chili single drop",
-		Callback = function(selectedVariant)
-			if type(selectedVariant) == "string" and selectedVariant ~= "" then
-				FarmConfig.CarryVariant = selectedVariant
+		Tooltip = "How the carried egg is brought back: fast tween (V1 or V2), instant steps, or on foot",
+		Callback = function(selectedDelivery)
+			for _, option in ipairs(DeliveryMethodOptions) do
+				if selectedDelivery == option then
+					FarmConfig.DeliveryMethod = option
+					return
+				end
 			end
+		end,
+	})
+
+	farmGroup:AddSlider("Slider_DeliverySteps", {
+		Text = "Step Count",
+		Min = 1,
+		Max = 6,
+		Default = 3,
+		Rounding = 0,
+		Tooltip = "Number of steps used by Instant Steps delivery",
+		Callback = function(sliderVal)
+			FarmConfig.DeliverySteps = math.clamp(ToFiniteNumber(sliderVal, 3), 1, 6)
 		end,
 	})
 
