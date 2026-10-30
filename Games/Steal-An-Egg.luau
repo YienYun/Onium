@@ -2501,12 +2501,13 @@ do
 	end
 
 	local DROP_GAP = 12
+	local CARRY_ROTATION = CFrame.Angles(0, math.pi / 2, 0)
 
 	local function GetDropPoint(cycle)
 		local dropX = Engine.GetSeparationX() + DROP_GAP
 		local groundY = ProbeGroundY(cycle, dropX, safePosition.Z)
 		local standY = groundY and (groundY + 3.2) or deliveryDrop.Position.Y
-		return CFrame.new(dropX, standY, safePosition.Z) * CFrame.Angles(0, math.pi / 2, 0)
+		return CFrame.new(dropX, standY, safePosition.Z) * CARRY_ROTATION
 	end
 
 	local function IsInSafeArea(cycle)
@@ -3165,60 +3166,6 @@ do
 		return IsCycleCurrent(cycle) and invokeDone and invokeResult or nil
 	end
 
-	local function TreadmillReset(cycle)
-		local playerPlot = GetPlayerPlot()
-		local beltPart = playerPlot and playerPlot:FindFirstChild("TreadmillBottom", true)
-		if beltPart and beltPart:IsA("Model") then
-			beltPart = beltPart.PrimaryPart or beltPart:FindFirstChildWhichIsA("BasePart", true)
-		end
-		if not beltPart or not beltPart:IsA("BasePart") or not treadmillRemotes.Wear or not treadmillRemotes.Doff then
-			return false
-		end
-
-		local beltStandCF = beltPart.CFrame * CFrame.new(0, beltPart.Size.Y * 0.5 + GetFeetOffset(cycle) + 0.05, 0)
-		if not Glide(cycle, beltStandCF) then
-			return false
-		end
-
-		local wornConfirmed, leftConfirmed = false, false
-		local wearDeadline = os.clock() + 0.7
-		while IsCycleCurrent(cycle) and os.clock() < wearDeadline do
-			InvokeTreadmillRemote(cycle, treadmillRemotes.Wear)
-			task.wait(0.08)
-			if treadmillRemotes.Snapshot then
-				local snapshot = InvokeTreadmillRemote(cycle, treadmillRemotes.Snapshot)
-				if type(snapshot) == "table" and table.find(snapshot, LocalPlayer.UserId) then
-					wornConfirmed = true
-					break
-				end
-			else
-				wornConfirmed = true
-				break
-			end
-		end
-
-		if wornConfirmed and IsCycleCurrent(cycle) then
-			task.wait(0.25)
-		end
-
-		local doffDeadline = os.clock() + 0.7
-		while IsCycleCurrent(cycle) and os.clock() < doffDeadline do
-			InvokeTreadmillRemote(cycle, treadmillRemotes.Doff)
-			task.wait(0.08)
-			if treadmillRemotes.Snapshot then
-				local snapshot = InvokeTreadmillRemote(cycle, treadmillRemotes.Snapshot)
-				if type(snapshot) == "table" and not table.find(snapshot, LocalPlayer.UserId) then
-					leftConfirmed = true
-					break
-				end
-			else
-				leftConfirmed = true
-				break
-			end
-		end
-		return wornConfirmed and leftConfirmed
-	end
-
 	local CARRY_LEG_AREAS = {
 		["Enchanted Forest"] = true,
 		["Light Dark"] = true,
@@ -3256,6 +3203,48 @@ do
 		UpdateClientBaseline(cycle, Vector3.zero)
 	end
 
+	local CARRY_REGRAB_TRIES = 3
+
+	local function RequestCarry(cycle, eggUid)
+		if not EggStateModule or type(EggStateModule.CarryFieldEgg) ~= "function" then
+			return
+		end
+		task.spawn(function()
+			if IsCycleCurrent(cycle) then
+				pcall(EggStateModule.CarryFieldEgg, eggUid)
+			end
+		end)
+	end
+
+	local function WaitRegrabbed(cycle, eggUid, seconds)
+		local grabDeadline = os.clock() + (seconds or 1.5)
+		local tries = 0
+		while IsCycleCurrent(cycle) and os.clock() < grabDeadline do
+			if IsCarriedByMe(eggUid) then
+				return true
+			end
+			if tries < CARRY_REGRAB_TRIES then
+				tries += 1
+				RequestCarry(cycle, eggUid)
+			end
+			task.wait(0.03)
+		end
+		return IsCarriedByMe(eggUid)
+	end
+
+	local function SnapToDroppedEgg(cycle, eggUid)
+		local eggRecord = ReadEgg(eggUid)
+		local bottomCF = eggRecord and (eggRecord.BottomCFrame or eggRecord.BoundsCFrame)
+		if not bottomCF then
+			return false
+		end
+		if (bottomCF.Position - cycle.Root.Position).Magnitude <= CARRY_SNAP_DISTANCE then
+			return true
+		end
+		CarrySetCFrame(cycle, CFrame.new(bottomCF.Position + Vector3.new(0, 3, 0)) * CARRY_ROTATION)
+		return true
+	end
+
 	local function DropAndRegrab(cycle, eggUid)
 		if not IsCycleCurrent(cycle) or not IsCarriedByMe(eggUid) then
 			return false
@@ -3266,13 +3255,12 @@ do
 
 		local dropDeadline = os.clock() + 1.5
 		while IsCycleCurrent(cycle) and os.clock() < dropDeadline do
+			if IsCarriedByMe(eggUid) then
+				break
+			end
 			local eggRecord = ReadEgg(eggUid)
 			if eggRecord and eggRecord.State == eggStates.Dropped then
-				local bottomCF = eggRecord.BottomCFrame or eggRecord.BoundsCFrame
-				if bottomCF and (bottomCF.Position - cycle.Root.Position).Magnitude > CARRY_SNAP_DISTANCE then
-					cycle.Root.CFrame = CFrame.new(bottomCF.Position + Vector3.new(0, 3.2, 0))
-					Engine.StopVelocity()
-				end
+				SnapToDroppedEgg(cycle, eggUid)
 				break
 			end
 			if not eggRecord or eggRecord.State == eggStates.Claimed then
@@ -3284,7 +3272,7 @@ do
 			return false
 		end
 
-		return RegrabBurst(cycle, eggUid, 0.5)
+		return WaitRegrabbed(cycle, eggUid, 1.5)
 	end
 
 	local function CarryHome(cycle, eggUid, dropTargetCF)
@@ -3296,7 +3284,6 @@ do
 			legPositionsX[index] = startPos.X - ((startPos.X - targetPos.X) * index / legCount)
 		end
 
-		local rotationCF = CFrame.Angles(0, math.pi / 2, 0)
 		local carrySpeed = math.clamp(tonumber(FarmConfig.FastTweenSpeed) or 3300, 800, 8000)
 		local carryY = math.max(startPos.Y, targetPos.Y)
 		local legIndex = 1
@@ -3321,7 +3308,7 @@ do
 
 			if legPositionsX[legIndex] and currentPos.X <= legPositionsX[legIndex] then
 				legIndex += 1
-				CarrySetCFrame(cycle, CFrame.new(currentPos.X, carryY, currentPos.Z) * rotationCF)
+				CarrySetCFrame(cycle, CFrame.new(currentPos.X, carryY, currentPos.Z) * CARRY_ROTATION)
 				task.wait(0.1)
 				if not DropAndRegrab(cycle, eggUid) then
 					return false
@@ -3330,7 +3317,7 @@ do
 			end
 
 			if currentPos.X - targetPos.X <= CARRY_STOP_DISTANCE then
-				CarrySetCFrame(cycle, CFrame.new(targetPos.X, targetPos.Y, targetPos.Z) * rotationCF)
+				CarrySetCFrame(cycle, CFrame.new(targetPos.X, targetPos.Y, targetPos.Z) * CARRY_ROTATION)
 				return true
 			end
 
@@ -3345,7 +3332,7 @@ do
 
 			local stepX = math.min(carrySpeed * deltaTime, CARRY_FRAME_CAP, currentPos.X - targetPos.X)
 			local nextZ = currentPos.Z + ((targetPos.Z - currentPos.Z) * CARRY_Z_EASE)
-			CarrySetCFrame(cycle, CFrame.new(currentPos.X - stepX, carryY, nextZ) * rotationCF)
+			CarrySetCFrame(cycle, CFrame.new(currentPos.X - stepX, carryY, nextZ) * CARRY_ROTATION)
 		end
 
 		return false
@@ -3430,32 +3417,16 @@ do
 				return false
 			end
 
-			local regrabDestination = droppedPosition and CFrame.new(droppedPosition + Vector3.new(0, 3.2, 0)) or dropTarget
+			local regrabDestination = droppedPosition and CFrame.new(droppedPosition + Vector3.new(0, 3, 0)) * CARRY_ROTATION
+				or dropTarget
 			CarrySetCFrame(cycle, regrabDestination)
 			if not IsCycleCurrent(cycle) then
 				return false
 			end
 
-			local regrabbedOk = RegrabBurst(cycle, eggUid, 0.5)
+			local regrabbedOk = WaitRegrabbed(cycle, eggUid, 2)
 			if not regrabbedOk and not IsCarriedByMe(eggUid) and IsCycleCurrent(cycle) then
-				Glide(cycle, GetSafeDestination(cycle))
-				if not IsCycleCurrent(cycle) then
-					return false
-				end
-				TreadmillReset(cycle)
-				if not IsCycleCurrent(cycle) then
-					return false
-				end
-				Glide(cycle, GetSafeDestination(cycle))
-				if not IsCycleCurrent(cycle) then
-					return false
-				end
-				Glide(cycle, regrabDestination, function()
-					return IsCarriedByMe(eggUid)
-				end)
-				if not IsCycleCurrent(cycle) then
-					return false
-				end
+				SnapToDroppedEgg(cycle, eggUid)
 				regrabbedOk = RegrabBurst(cycle, eggUid, 0.6)
 			end
 
