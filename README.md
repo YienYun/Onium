@@ -11,7 +11,7 @@ Tujuan repo: satu sumber kebenaran yang rapi, mudah dibaca, mudah dimaintain, da
 | Path | Isi | Peran |
 | --- | --- | --- |
 | `Games/Steal-An-Egg.luau` | Hub utama game (single file, ±15.100 baris) | Kode produksi. Semua fitur, engine, dan UI hub ada di sini. |
-| `Games/AstronSAE.luau` | Auto Steal baru (ditulis ulang dari nol, logika Chili) | Modul mandiri: katalog, kandidat, Move To Egg, Delivery (Fast Tween / Instant Steps / Walk), drop & re-grab, deposit. Panel UI minimal sendiri. |
+| `Games/AstronSAE.luau` | Auto Steal baru (ditulis ulang dari nol, logika Chili) | Satu file mandiri: library UI Chili (diambil dari `Source/ChiliHubSourceV2.luau` baris 143-5905) + katalog, kandidat, Move To Egg, Delivery (Fast Tween / Instant Steps / Walk), drop & re-grab, deposit. |
 | `Games/StealAnEgg/Prediction.luau` | Modul tab Predictor (±2890 baris) | Modul terpisah: baca egg, format uang/berat/waktu, gradient rarity, kartu preview besar, tombol status, grid kartu egg, fuse predictor, dan Discord webhook. Dimuat hub lewat URL. |
 | `Games/StealAnEgg/EggFinder.luau` | Modul group `Egg Finder` (±840 baris) | Modul terpisah: sembilan kontrol hop, survey field per server, dan loop auto hop. Dimuat hub lewat URL. |
 | `Library/OniumV4.luau` | UI library hub (turunan Obsidian, ±17.800 baris) | Komponen window, tab, groupbox, dan element. |
