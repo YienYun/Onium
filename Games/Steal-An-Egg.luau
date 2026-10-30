@@ -313,6 +313,7 @@ local FarmConfig = {
 	Defense_AntiRagdoll = true,
 	TweenSpeed = 600,
 	AutoTweenSpeed = 400,
+	FastTweenSpeed = 3300,
 	SelectedZones = {},
 	SelectedEggs = {},
 	SelectedRarities = {},
@@ -2505,7 +2506,7 @@ do
 		local dropX = Engine.GetSeparationX() + DROP_GAP
 		local groundY = ProbeGroundY(cycle, dropX, safePosition.Z)
 		local standY = groundY and (groundY + 3.2) or deliveryDrop.Position.Y
-		return CFrame.new(dropX, standY, safePosition.Z) * cycle.Root.CFrame.Rotation
+		return CFrame.new(dropX, standY, safePosition.Z) * CFrame.Angles(0, math.pi / 2, 0)
 	end
 
 	local function IsInSafeArea(cycle)
@@ -3225,6 +3226,8 @@ do
 	}
 	local CARRY_STOP_DISTANCE = 36
 	local CARRY_SNAP_DISTANCE = 6
+	local CARRY_FRAME_CAP = 250
+	local CARRY_Z_EASE = 0.03
 
 	local function CarryLegCount(cycle)
 		local areaId = cycle.Target and cycle.Target.AreaId
@@ -3245,31 +3248,16 @@ do
 		return 1
 	end
 
-	local function GetCarryLegs(cycle, destinationCF)
-		local startPos = cycle.Root.Position
-		local legCount = CarryLegCount(cycle)
-		local legs = {}
-		for index = 1, legCount - 1 do
-			local share = index / legCount
-			legs[index] = CFrame.new(
-				startPos.X - (startPos.X - destinationCF.Position.X) * share,
-				destinationCF.Position.Y,
-				startPos.Z + (destinationCF.Position.Z - startPos.Z) * share
-			) * cycle.Root.CFrame.Rotation
-		end
-		return legs
+	local function CarrySetCFrame(cycle, targetCF)
+		cycle.Root.CFrame = targetCF
+		cycle.Root.AssemblyLinearVelocity = Vector3.zero
+		cycle.Root.AssemblyAngularVelocity = Vector3.zero
+		cycle.TravelVelocity = Vector3.zero
+		UpdateClientBaseline(cycle, Vector3.zero)
 	end
 
-	local function DropAndRegrab(cycle, eggUid, destinationCF)
-		Glide(cycle, destinationCF, function()
-			return not IsCarriedByMe(eggUid)
-		end)
+	local function DropAndRegrab(cycle, eggUid)
 		if not IsCycleCurrent(cycle) or not IsCarriedByMe(eggUid) then
-			return false
-		end
-
-		task.wait(0.1)
-		if not IsCycleCurrent(cycle) then
 			return false
 		end
 		if EggStateModule and type(EggStateModule.DropFieldEgg) == "function" then
@@ -3284,7 +3272,6 @@ do
 				if bottomCF and (bottomCF.Position - cycle.Root.Position).Magnitude > CARRY_SNAP_DISTANCE then
 					cycle.Root.CFrame = CFrame.new(bottomCF.Position + Vector3.new(0, 3.2, 0))
 					Engine.StopVelocity()
-					SyncHoverPad(cycle, cycle.Root.Position)
 				end
 				break
 			end
@@ -3298,6 +3285,70 @@ do
 		end
 
 		return RegrabBurst(cycle, eggUid, 0.5)
+	end
+
+	local function CarryHome(cycle, eggUid, dropTargetCF)
+		local startPos = cycle.Root.Position
+		local targetPos = dropTargetCF.Position
+		local legCount = CarryLegCount(cycle)
+		local legPositionsX = {}
+		for index = 1, legCount - 1 do
+			legPositionsX[index] = startPos.X - ((startPos.X - targetPos.X) * index / legCount)
+		end
+
+		local rotationCF = CFrame.Angles(0, math.pi / 2, 0)
+		local carrySpeed = math.clamp(tonumber(FarmConfig.FastTweenSpeed) or 3300, 800, 8000)
+		local carryY = math.max(startPos.Y, targetPos.Y)
+		local legIndex = 1
+		local carryDeadline = os.clock() + 60
+
+		cycle.ArrivalHold = nil
+		cycle.UseHoverPad = false
+		if cycle.HoverPad then
+			cycle.HoverPad:Destroy()
+			cycle.HoverPad = nil
+		end
+		cycle.Humanoid.AutoRotate = false
+
+		while IsCycleCurrent(cycle) and os.clock() < carryDeadline do
+			if not IsCarriedByMe(eggUid) then
+				return false
+			end
+			if not WaitForGuardClear(cycle) then
+				return false
+			end
+			local currentPos = cycle.Root.Position
+
+			if legPositionsX[legIndex] and currentPos.X <= legPositionsX[legIndex] then
+				legIndex += 1
+				CarrySetCFrame(cycle, CFrame.new(currentPos.X, carryY, currentPos.Z) * rotationCF)
+				task.wait(0.1)
+				if not DropAndRegrab(cycle, eggUid) then
+					return false
+				end
+				continue
+			end
+
+			if currentPos.X - targetPos.X <= CARRY_STOP_DISTANCE then
+				CarrySetCFrame(cycle, CFrame.new(targetPos.X, targetPos.Y, targetPos.Z) * rotationCF)
+				return true
+			end
+
+			local rawDt = RunService.Heartbeat:Wait()
+			local deltaTime = math.clamp(tonumber(rawDt) or (1 / 60), 1 / 240, 0.15)
+			if not IsCycleCurrent(cycle) then
+				return false
+			end
+			if Engine.Guard.Busy then
+				continue
+			end
+
+			local stepX = math.min(carrySpeed * deltaTime, CARRY_FRAME_CAP, currentPos.X - targetPos.X)
+			local nextZ = currentPos.Z + ((targetPos.Z - currentPos.Z) * CARRY_Z_EASE)
+			CarrySetCFrame(cycle, CFrame.new(currentPos.X - stepX, carryY, nextZ) * rotationCF)
+		end
+
+		return false
 	end
 
 	local function DeliverSenaEgg(cycle, eggUid)
@@ -3314,26 +3365,9 @@ do
 			SetCycleStatus(cycle, "Bringing egg home")
 			cycle.DeliveryDropUid = eggUid
 			local dropTarget = GetDropPoint(cycle)
-			local legs = GetCarryLegs(cycle, dropTarget)
-
-			for _, legCF in ipairs(legs) do
-				if cycle.Root.Position.X - dropTarget.Position.X <= CARRY_STOP_DISTANCE then
-					break
-				end
-				if not DropAndRegrab(cycle, eggUid, legCF) then
-					break
-				end
-			end
-
-			if IsCycleCurrent(cycle) and IsCarriedByMe(eggUid) then
-				Glide(cycle, dropTarget, function()
-					return not IsCarriedByMe(eggUid)
-				end)
-				if IsCycleCurrent(cycle) and IsCarriedByMe(eggUid) then
-					cycle.Root.CFrame = dropTarget
-					Engine.StopVelocity()
-					SyncHoverPad(cycle, dropTarget.Position)
-				end
+			CarryHome(cycle, eggUid, dropTarget)
+			if not IsCycleCurrent(cycle) then
+				return false
 			end
 
 			local dropConfirmed = false
@@ -3341,13 +3375,8 @@ do
 				if not IsCycleCurrent(cycle) or not IsCarriedByMe(eggUid) then
 					break
 				end
-				Glide(cycle, dropTarget, function()
-					return not IsCarriedByMe(eggUid)
-				end)
-				if not IsCycleCurrent(cycle) then
-					return false
-				end
 				if IsCarriedByMe(eggUid) then
+					CarrySetCFrame(cycle, dropTarget)
 					task.wait(0.15)
 					if not IsCycleCurrent(cycle) then
 						return false
@@ -3402,9 +3431,7 @@ do
 			end
 
 			local regrabDestination = droppedPosition and CFrame.new(droppedPosition + Vector3.new(0, 3.2, 0)) or dropTarget
-			Glide(cycle, regrabDestination, function()
-				return IsCarriedByMe(eggUid)
-			end)
+			CarrySetCFrame(cycle, regrabDestination)
 			if not IsCycleCurrent(cycle) then
 				return false
 			end
@@ -13138,6 +13165,18 @@ function Hub.Features.BuildFarmEggs(farmGroup)
 			if selectedMethod == "Walk" or selectedMethod == "Fast Tween" then
 				FarmConfig.StealMethod = selectedMethod
 			end
+		end,
+	})
+
+	farmGroup:AddSlider("Slider_AutoSteal_FastTweenSpeed", {
+		Text = "Fast Tween Speed",
+		Min = 3000,
+		Max = 4500,
+		Default = 3300,
+		Rounding = 0,
+		Suffix = " st/s",
+		Callback = function(sliderVal)
+			FarmConfig.FastTweenSpeed = math.clamp(ToFiniteNumber(sliderVal, 3300), 3000, 4500)
 		end,
 	})
 
