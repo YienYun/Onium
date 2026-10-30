@@ -1664,47 +1664,6 @@ function Engine.GetSeparationX()
 	return SAFE_BASE_LINE_X
 end
 
-local carryZoneParts, carryZoneCheckedAt = {}, 0
-
-function Engine.CarryZoneParts()
-	local now = os.clock()
-	if now - carryZoneCheckedAt < 5 and #carryZoneParts > 0 then
-		return carryZoneParts
-	end
-
-	carryZoneCheckedAt = now
-	table.clear(carryZoneParts)
-	local worldFolder = Workspace:FindFirstChild("World") or Workspace:FindFirstChild("__OBJECTS")
-	local areasFolder = worldFolder and worldFolder:FindFirstChild("Areas")
-	local boundsFolder = areasFolder and areasFolder:FindFirstChild("EggCarryBounds")
-	if boundsFolder then
-		for _, part in ipairs(boundsFolder:GetChildren()) do
-			if part:IsA("BasePart") and part.Name ~= "SafeZone" then
-				table.insert(carryZoneParts, part)
-			end
-		end
-	end
-
-	return carryZoneParts
-end
-
-function Engine.CarryZoneAt(checkPos)
-	local position = checkPos or (Engine.Root() and Engine.Root().Position)
-	if position == nil then
-		return nil
-	end
-	for _, part in ipairs(Engine.CarryZoneParts()) do
-		local localPos = part.CFrame:PointToObjectSpace(position)
-		if math.abs(localPos.X) <= part.Size.X * 0.5
-			and math.abs(localPos.Z) <= part.Size.Z * 0.5
-			and math.abs(localPos.Y) <= part.Size.Y * 0.5 + 40
-		then
-			return part
-		end
-	end
-	return nil
-end
-
 function Engine.InsideBase(checkPos)
 	if checkPos == nil then
 		local rootPart = Engine.Root()
@@ -3259,9 +3218,47 @@ do
 		return wornConfirmed and leftConfirmed
 	end
 
-	local CARRY_DROP_LIMIT = 4
-	local CARRY_DROP_MIN_DISTANCE = 40
-	local CARRY_DROP_MIN_TRAVEL = 120
+	local CARRY_LEG_AREAS = {
+		["Enchanted Forest"] = true,
+		["Light Dark"] = true,
+		["Titan Temple"] = true,
+	}
+	local CARRY_STOP_DISTANCE = 36
+	local CARRY_SNAP_DISTANCE = 6
+
+	local function CarryLegCount(cycle)
+		local areaId = cycle.Target and cycle.Target.AreaId
+		if areaId and CARRY_LEG_AREAS[areaId] then
+			return 4
+		end
+		local worldFolder = Workspace:FindFirstChild("World") or Workspace:FindFirstChild("__OBJECTS")
+		local areasFolder = worldFolder and worldFolder:FindFirstChild("Areas")
+		local guardAreas = areasFolder and areasFolder:FindFirstChild("GuardAreas")
+		local guardArea = areaId and guardAreas and guardAreas:FindFirstChild(areaId)
+		local escapeSpeeds = guardArea and guardArea:GetAttribute("GuardEscapeSpeeds")
+		if typeof(escapeSpeeds) == "Vector2" then
+			local walkSpeed = tonumber(cycle.Humanoid.WalkSpeed) or 16
+			if walkSpeed * 0.9 < escapeSpeeds.Y * 1.05 then
+				return 2
+			end
+		end
+		return 1
+	end
+
+	local function GetCarryLegs(cycle, destinationCF)
+		local startPos = cycle.Root.Position
+		local legCount = CarryLegCount(cycle)
+		local legs = {}
+		for index = 1, legCount - 1 do
+			local share = index / legCount
+			legs[index] = CFrame.new(
+				startPos.X - (startPos.X - destinationCF.Position.X) * share,
+				destinationCF.Position.Y,
+				startPos.Z + (destinationCF.Position.Z - startPos.Z) * share
+			) * cycle.Root.CFrame.Rotation
+		end
+		return legs
+	end
 
 	local function DropAndRegrab(cycle, eggUid, destinationCF)
 		Glide(cycle, destinationCF, function()
@@ -3271,24 +3268,30 @@ do
 			return false
 		end
 
+		task.wait(0.1)
+		if not IsCycleCurrent(cycle) then
+			return false
+		end
 		if EggStateModule and type(EggStateModule.DropFieldEgg) == "function" then
 			pcall(EggStateModule.DropFieldEgg, "PlayerRequest")
 		end
 
-		local dropDeadline = os.clock() + 1
-		while IsCycleCurrent(cycle) and os.clock() < dropDeadline and IsCarriedByMe(eggUid) do
+		local dropDeadline = os.clock() + 1.5
+		while IsCycleCurrent(cycle) and os.clock() < dropDeadline do
+			local eggRecord = ReadEgg(eggUid)
+			if eggRecord and eggRecord.State == eggStates.Dropped then
+				local bottomCF = eggRecord.BottomCFrame or eggRecord.BoundsCFrame
+				if bottomCF and (bottomCF.Position - cycle.Root.Position).Magnitude > CARRY_SNAP_DISTANCE then
+					cycle.Root.CFrame = CFrame.new(bottomCF.Position + Vector3.new(0, 3.2, 0))
+					Engine.StopVelocity()
+					SyncHoverPad(cycle, cycle.Root.Position)
+				end
+				break
+			end
+			if not eggRecord or eggRecord.State == eggStates.Claimed then
+				break
+			end
 			task.wait(0.03)
-		end
-		if not IsCycleCurrent(cycle) or IsCarriedByMe(eggUid) then
-			return false
-		end
-
-		local eggRecord = ReadEgg(eggUid)
-		local bottomCF = eggRecord and (eggRecord.BottomCFrame or eggRecord.BoundsCFrame)
-		if bottomCF then
-			Glide(cycle, CFrame.new(bottomCF.Position + Vector3.new(0, 3.2, 0)), function()
-				return IsCarriedByMe(eggUid)
-			end)
 		end
 		if not IsCycleCurrent(cycle) then
 			return false
@@ -3311,36 +3314,27 @@ do
 			SetCycleStatus(cycle, "Bringing egg home")
 			cycle.DeliveryDropUid = eggUid
 			local dropTarget = GetDropPoint(cycle)
+			local legs = GetCarryLegs(cycle, dropTarget)
 
-			local carryOrigin = cycle.Root.Position
-			local dropsDone = 0
-			while IsCycleCurrent(cycle)
-				and IsCarriedByMe(eggUid)
-				and dropsDone < CARRY_DROP_LIMIT
-				and (cycle.Root.Position - dropTarget.Position).Magnitude > CARRY_DROP_MIN_DISTANCE
-			do
-				local zoneAtStart = Engine.CarryZoneAt(cycle.Root.Position)
-				local arrived = Glide(cycle, dropTarget, function()
-					if not IsCarriedByMe(eggUid) then
-						return true
-					end
-					local zoneNow = Engine.CarryZoneAt(cycle.Root.Position)
-					return zoneNow ~= nil
-						and zoneNow ~= zoneAtStart
-						and (cycle.Root.Position - carryOrigin).Magnitude > CARRY_DROP_MIN_TRAVEL
-				end)
-				if not IsCycleCurrent(cycle) or not IsCarriedByMe(eggUid) or arrived then
+			for _, legCF in ipairs(legs) do
+				if cycle.Root.Position.X - dropTarget.Position.X <= CARRY_STOP_DISTANCE then
 					break
 				end
-				dropsDone = dropsDone + 1
-				if not DropAndRegrab(cycle, eggUid, cycle.Root.CFrame) then
+				if not DropAndRegrab(cycle, eggUid, legCF) then
 					break
 				end
 			end
 
-			Glide(cycle, dropTarget, function()
-				return not IsCarriedByMe(eggUid)
-			end)
+			if IsCycleCurrent(cycle) and IsCarriedByMe(eggUid) then
+				Glide(cycle, dropTarget, function()
+					return not IsCarriedByMe(eggUid)
+				end)
+				if IsCycleCurrent(cycle) and IsCarriedByMe(eggUid) then
+					cycle.Root.CFrame = dropTarget
+					Engine.StopVelocity()
+					SyncHoverPad(cycle, dropTarget.Position)
+				end
+			end
 
 			local dropConfirmed = false
 			for _ = 1, 3 do

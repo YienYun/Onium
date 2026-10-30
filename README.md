@@ -16,6 +16,7 @@ Tujuan repo: satu sumber kebenaran yang rapi, mudah dibaca, mudah dimaintain, da
 | `Library/OniumV4.luau` | UI library hub (turunan Obsidian, ±17.800 baris) | Komponen window, tab, groupbox, dan element. |
 | `Manager/` | `FpsManger.luau`, `SaveManager.luau`, `ThemeManger.luau`, `ServerManger.luau` | Manager UI (performance, config, theme, server). Dimuat hub lewat URL, bukan dari sini. |
 | `Source/ChiliHub.luau` | Source hasil deobfuscate (Chili Hub V3, ±53.000 baris) | **Referensi baca saja.** Bukan bahan copy-paste. |
+| `Source/ChiliHubSourceV2.luau` | Source deobfuscate Chili Hub terbaru (±52.000 baris) | Referensi utama untuk logika Auto Steal (Fast Tween, drop/re-grab). **Referensi baca saja.** |
 | `DexExploler/` | Dump `ReplicatedStorage` game (±1.900 file, hasil Dex) | Referensi baca saja: nama module, remote, dan alur asli game. |
 | `README.md` | Dokumen ini | Peta arsitektur + aturan kerja. |
 
