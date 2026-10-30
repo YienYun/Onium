@@ -14,6 +14,15 @@ local function createUiLibrary()
 		local HttpService = getService("HttpService")
 		local GuiService = getService("GuiService")
 		local localPlayer, scrollingFrame = Players.LocalPlayer, Enum
+
+		local function uiParent()
+			local player = localPlayer or Players.LocalPlayer
+			local playerGui = player and player:FindFirstChildOfClass("PlayerGui")
+			if playerGui then
+				return playerGui
+			end
+			return (gethui and gethui()) or getService("CoreGui")
+		end
 		local color3FromRGB = Color3.fromRGB
 		local uDim2New = UDim2.new
 		local uDim2FromScale = UDim2.fromScale
@@ -492,7 +501,7 @@ local function createUiLibrary()
 			local w3 = setmetatable({Tabs = {}, Opts = {}, ByPath = {}, St = {}, open = false, cols = {}, rest = uDim2FromScale(0.5, 0.475)}, index)
 			Z.W = w3
 			w2 = w3
-			local hui = (gethui and gethui()) or getService("CoreGui")
+			local hui = uiParent()
 			w3.par = hui
 
 			for _, child in ipairs(hui:GetChildren()) do
@@ -4607,7 +4616,7 @@ local function createUiLibrary()
 				return TextLabel
 			end
 
-			local ScreenGui = c("ScreenGui", {Parent = (gethui and gethui()) or getService("CoreGui"), DisplayOrder = 2000000000, IgnoreGuiInset = true, ResetOnSpawn = false, ZIndexBehavior = scrollingFrame.ZIndexBehavior.Sibling})
+			local ScreenGui = c("ScreenGui", {Parent = uiParent(), DisplayOrder = 2000000000, IgnoreGuiInset = true, ResetOnSpawn = false, ZIndexBehavior = scrollingFrame.ZIndexBehavior.Sibling})
 			N.dlg = ScreenGui
 			c("TextButton", {Parent = ScreenGui, BackgroundColor3 = G, BackgroundTransparency = 0.45, Modal = true, Size = uDim2FromScale(1, 1), ZIndex = 1})
 			local Frame2 = c("Frame", {Parent = ScreenGui, Active = true, AnchorPoint = vector2New(0.5, 0.5), BackgroundColor3 = G, BackgroundTransparency = 0.18, Position = uDim2FromScale(0.5, 0.5), Size = uDim2FromOffset(430, 316), ZIndex = 10})
@@ -5766,7 +5775,6 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
-local CollectionService = game:GetService("CollectionService")
 local UserInputService = game:GetService("UserInputService")
 
 local LocalPlayer = Players.LocalPlayer
@@ -5799,14 +5807,53 @@ local Astron = {
 	},
 }
 
-local SAFE_CORRIDOR_Z = -365.3
-local DROP_GAP_X = 13.8
-local DROP_HEIGHT = 3.35
-local CARRY_STOP_DISTANCE = 36
-local CARRY_SNAP_DISTANCE = 6
-local CARRY_FRAME_CAP = 250
-local CARRY_Z_EASE = 0.03
 local CARRY_ROTATION = CFrame.Angles(0, math.pi / 2, 0)
+local CARRY_FRAME_CAP = 250
+local CARRY_STOP_DISTANCE = 36
+local CARRY_LEG_WAIT = 0.1
+local CARRY_LIFT = 3
+local CARRY_LIFT_TOLERANCE = 2
+local CARRY_Z_EASE = 0.03
+local CARRY_Z_EASE_LIMIT = 0.3
+local CARRY_WALK_SCALE = 0.95
+local CARRY_Z_MIN = -415
+local CARRY_Z_MAX = -305
+local CARRY_Z_CENTER = -382
+local CARRY_DROP_GAP_X = 15.4
+local CARRY_DROP_HEIGHT = 70.6
+local CARRY_ENTRY_GAP_X = -11.8
+local CARRY_ENTRY_Z = -383.3
+local CARRY_ENTRY_RADIUS = 60
+local CARRY_ENTRY_STEP = 500
+local CARRY_ENTRY_WAIT = 0.155
+local CARRY_ENTRY_TIMEOUT = 6
+local CARRY_INSTANT_LIFT = 42
+local CARRY_INSTANT_SCALE = 1.515
+local CARRY_INSTANT_MIN = 40
+local CARRY_INSTANT_WAIT = 0.19
+local CARRY_TWEEN_WINDOW = 3
+local GRAB_RADIUS = 8
+local GRAB_TIMEOUT = 6
+local GRAB_POLL_INTERVAL = 0.05
+local GRAB_PROMPT_INTERVAL = 0.15
+local GRAB_PROMPT_RADIUS = 12
+local GRAB_MAX_REQUESTS = 3
+local GRAB_CLOSER_DELAY = 0.5
+local GRAB_CLOSER_SETTLE = 0.6
+local GRAB_CLOSER_FAR = 7
+local GRAB_CLOSER_NEAR = 1.5
+local GRAB_CLOSER_WAIT = 0.35
+local GRAB_CLOSER_EXTRA = 0.7
+local DROP_TIMEOUT = 2
+local DROP_CONFIRM_TIMEOUT = 0.3
+local MOVE_REACH_RADIUS = 2.5
+local MOVE_HEIGHT_TOLERANCE = 4
+local MOVE_REFRESH_INTERVAL = 0.25
+local MOVE_STUCK_WINDOW = 0.8
+local MOVE_RESET_WINDOW = 3
+local MOVE_JUMP_WINDOW = 1
+local MOVE_TIMEOUT = 60
+local SKIP_SECONDS = 20
 local QUICK_STEP_AREAS = {
 	["Enchanted Forest"] = true,
 	["Light Dark"] = true,
@@ -5829,7 +5876,8 @@ local EggState = RequireModule("Client", "EggState")
 local AreasData = RequireModule("Data", "Areas")
 local AssetsData = RequireModule("Data", "Assets")
 local Earnings = RequireModule("Shared", "Util", "AssetEarnings")
-local Save = RequireModule("Shared", "Save") or RequireModule("Client", "Save")
+local EggTypes = RequireModule("Shared", "Types", "AreaEggs")
+local EggStates = EggTypes and EggTypes.States or nil
 
 local function NormalizeKey(value)
 	return string.lower((tostring(value or ""):gsub("%s+", " ")))
@@ -5877,8 +5925,9 @@ end
 
 local function SetStatus(text)
 	Astron.State.Status = text
-	if Astron.UI and Astron.UI.Status then
-		Astron.UI.Status:Set(text)
+	local statusRow = Astron.UI and Astron.UI.Status
+	if statusRow then
+		pcall(statusRow.Set, statusRow, text)
 	end
 end
 
@@ -5968,7 +6017,14 @@ local function ReadFieldEggs()
 	if not ok or type(snapshot) ~= "table" then
 		return {}
 	end
-	return type(snapshot.Records) == "table" and snapshot.Records or {}
+	local records = {}
+	for key, record in pairs(type(snapshot.Records) == "table" and snapshot.Records or {}) do
+		if type(record) == "table" then
+			record.Uid = record.Uid or tostring(key)
+			table.insert(records, record)
+		end
+	end
+	return records
 end
 
 local function ReadFieldEgg(uid)
@@ -5979,15 +6035,24 @@ local function ReadFieldEgg(uid)
 	return (ok and type(record) == "table") and record or nil
 end
 
-local function IsCarriedByMe(uid)
-	local record = ReadFieldEgg(uid)
-	return record ~= nil
-		and record.State == "Carried"
-		and ToNumber(record.CarrierUserId, 0) == LocalPlayer.UserId
+local function EggStateName(record)
+	local state = record and record.State
+	if EggStates then
+		if state == EggStates.Carried then
+			return "Carried"
+		elseif state == EggStates.Dropped then
+			return "Dropped"
+		elseif state == EggStates.Slot then
+			return "Slot"
+		elseif state == EggStates.GuardCarried then
+			return "GuardCarried"
+		end
+	end
+	return type(state) == "string" and state or nil
 end
 
 local function EggPosition(record)
-	local pivot = record.BottomCFrame or record.BoundsCFrame
+	local pivot = record.BottomCFrame or record.BoundsCFrame or record.CFrame
 	if typeof(pivot) == "CFrame" then
 		return pivot.Position
 	end
@@ -6007,8 +6072,9 @@ end
 function Astron.CollectCandidates()
 	local candidates = {}
 	local minRank = MinRarityRank()
-	for _, record in pairs(ReadFieldEggs()) do
-		if type(record) == "table" and record.State ~= "Carried" and record.State ~= "Claimed" then
+	for _, record in ipairs(ReadFieldEggs()) do
+		local stateName = EggStateName(record)
+		if stateName ~= "Carried" and stateName ~= "Claimed" then
 			local position = EggPosition(record)
 			local categoryName = tostring(record.AssetCategory or "Egg")
 			local rarityName, rarityRank = RarityInfo(categoryName)
@@ -6051,42 +6117,56 @@ local function SeparationPosition()
 	if line and line:IsA("BasePart") then
 		return line.Position
 	end
-	return Vector3.new(552, 71, SAFE_CORRIDOR_Z)
+	return Vector3.new(552.2, 67.67, 0)
 end
 
-local function SafeZoneParts()
-	local parts = {}
-	for _, part in ipairs(CollectionService:GetTagged("SafeZone")) do
-		if part:IsA("BasePart") and part:IsDescendantOf(Workspace) then
-			table.insert(parts, part)
-		end
+local Carry = { Active = false, Uid = nil }
+
+local function TrackCarry()
+	local signal = EggState and EggState.CarryChanged
+	if type(signal) ~= "table" or type(signal.Connect) ~= "function" then
+		return
 	end
-	return parts
+	pcall(function()
+		signal:Connect(function(payload)
+			if type(payload) ~= "table" then
+				return
+			end
+			Carry.Active = payload.IsCarrying == true
+			Carry.Uid = payload.Uid ~= nil and tostring(payload.Uid) or nil
+		end)
+	end)
 end
 
-local function OwnSafeZone()
-	local separation = SeparationPosition()
-	local bestPart, bestX = nil, -math.huge
-	for _, part in ipairs(SafeZoneParts()) do
-		if part.Position.X < separation.X and part.Position.X > bestX then
-			bestPart, bestX = part, part.Position.X
-		end
+local function IsCarrying(uid)
+	if Carry.Active then
+		return uid == nil or Carry.Uid == tostring(uid)
 	end
-	return bestPart
-end
-
-local function DropPoint()
-	local separation = SeparationPosition()
-	return Vector3.new(separation.X + DROP_GAP_X, separation.Y + DROP_HEIGHT, SAFE_CORRIDOR_Z)
-end
-
-local function DepositPoint()
-	local zone = OwnSafeZone()
-	if zone then
-		return zone.Position + Vector3.new(0, zone.Size.Y * 0.5, 0)
+	if uid == nil then
+		return false
 	end
-	local separation = SeparationPosition()
-	return Vector3.new(separation.X - 25, separation.Y + 3, SAFE_CORRIDOR_Z)
+	local record = ReadFieldEgg(uid)
+	return record ~= nil
+		and EggStateName(record) == "Carried"
+		and ToNumber(record.CarrierUserId, 0) == LocalPlayer.UserId
+end
+
+local function RootRotation()
+	local root = GetRoot()
+	return root and root.CFrame.Rotation or CARRY_ROTATION
+end
+
+local function SetRootPosition(position, rotation)
+	local root = GetRoot()
+	if not root then
+		return false
+	end
+	pcall(function()
+		root.CFrame = CFrame.new(position) * (rotation or CARRY_ROTATION)
+		root.AssemblyLinearVelocity = Vector3.zero
+		root.AssemblyAngularVelocity = Vector3.zero
+	end)
+	return true
 end
 
 local function GroundY(x, z)
@@ -6102,14 +6182,13 @@ local function GroundY(x, z)
 	return hit and hit.Position.Y or nil
 end
 
-local function SetCarryCFrame(position)
-	local root = GetRoot()
-	if not root then
-		return
-	end
-	root.CFrame = CFrame.new(position) * CARRY_ROTATION
-	root.AssemblyLinearVelocity = Vector3.zero
-	root.AssemblyAngularVelocity = Vector3.zero
+local function WalkSpeedBase()
+	local humanoid = GetHumanoid()
+	return math.max(ToNumber(humanoid and humanoid.WalkSpeed, 16), 16)
+end
+
+local function DeliveryScale()
+	return math.clamp(ToNumber(Astron.Settings.DeliverySpeed, 100) / 100, 0.8, 1.1)
 end
 
 local function LegCount(areaId)
@@ -6122,366 +6201,369 @@ local function LegCount(areaId)
 	local guardArea = areaId and guardAreas and guardAreas:FindFirstChild(areaId)
 	local escapeSpeeds = guardArea and guardArea:GetAttribute("GuardEscapeSpeeds")
 	if typeof(escapeSpeeds) == "Vector2" then
-		local walkSpeed = ToNumber(GetHumanoid() and GetHumanoid().WalkSpeed, 16)
-		if walkSpeed * 0.9 < escapeSpeeds.Y * 1.05 then
+		if WalkSpeedBase() * 0.9 < escapeSpeeds.Y * 1.05 then
 			return 2
 		end
 	end
 	return 1
 end
 
-local function CarrySpeed()
-	local base = math.clamp(ToNumber(Astron.Settings.FastTweenSpeed, 3300), 800, 8000)
-	local scale = math.clamp(ToNumber(Astron.Settings.DeliverySpeed, 100), 50, 200) / 100
-	return base * scale
-end
-
-local function RequestCarry(uid, slotKey)
-	if not EggState or type(EggState.CarryFieldEgg) ~= "function" then
-		return
-	end
-	task.spawn(function()
-		pcall(EggState.CarryFieldEgg, uid, slotKey)
-	end)
-	local slots = Workspace:FindFirstChild("AreaEggSlotsClient")
-	local model = slots and slots:FindFirstChild(tostring(uid))
-	local prompt = model and model:FindFirstChildWhichIsA("ProximityPrompt", true)
-	if prompt and prompt.Enabled and typeof(fireproximityprompt) == "function" then
-		pcall(fireproximityprompt, prompt)
-	end
-end
-
-local function RequestDrop()
-	if not EggState or type(EggState.DropFieldEgg) ~= "function" then
-		return
-	end
-	pcall(EggState.DropFieldEgg, "PlayerRequest")
-end
-
-local function SnapToEgg(uid)
-	local record = ReadFieldEgg(uid)
-	local position = record and EggPosition(record)
+local function MoveToPoint(target, isValid)
+	local humanoid = GetHumanoid()
 	local root = GetRoot()
-	if not position or not root then
-		return
-	end
-	if (position - root.Position).Magnitude > CARRY_SNAP_DISTANCE then
-		SetCarryCFrame(position + Vector3.new(0, 3, 0))
-	end
-end
-
-local function DropAndRegrab(uid)
-	if not IsCarriedByMe(uid) then
+	if not humanoid or not root then
 		return false
 	end
-	RequestDrop()
-	local snapped, tries = false, 0
-	local deadline = os.clock() + 2
-	while os.clock() < deadline and Astron.State.Running do
-		if IsCarriedByMe(uid) then
-			return true
-		end
-		local record = ReadFieldEgg(uid)
-		if not snapped and record and record.State == "Dropped" then
-			snapped = true
-			SnapToEgg(uid)
-		end
-		if tries < 3 then
-			tries = tries + 1
-			RequestCarry(uid)
-		end
-		task.wait(0.03)
-	end
-	return IsCarriedByMe(uid)
-end
-
-function Astron.TweenTo(targetPosition, tolerance, deadlineSeconds)
-	local root = GetRoot()
-	if not root then
-		return false
-	end
-	local deadline = os.clock() + (deadlineSeconds or 20)
-	local toleranceDistance = tolerance or 2
-	local speed = 5000
-	while os.clock() < deadline and Astron.State.Running and IsAlive() do
+	local baseSpeed = math.max(humanoid.WalkSpeed, 16)
+	local runScale = DeliveryScale() * 1.14
+	local deadline = os.clock() + MOVE_TIMEOUT
+	local closest, closestAt = math.huge, os.clock()
+	local jumped, reached, nextRefresh = false, false, 0
+	while Astron.State.Running and IsAlive() and (isValid == nil or isValid()) and os.clock() < deadline do
 		root = GetRoot()
-		if not root then
-			return false
+		humanoid = GetHumanoid()
+		if not root or not humanoid then
+			break
 		end
-		local current = root.Position
-		local delta = targetPosition - current
-		if delta.Magnitude <= toleranceDistance then
-			return true
+		local offset = Vector3.new(target.X - root.Position.X, 0, target.Z - root.Position.Z)
+		if offset.Magnitude < closest - 5 then
+			closest, closestAt = offset.Magnitude, os.clock()
+		elseif (os.clock() - closestAt) > MOVE_RESET_WINDOW then
+			break
+		elseif (not jumped) and (os.clock() - closestAt) > MOVE_STUCK_WINDOW then
+			jumped = true
 		end
-		local dt = RunService.Heartbeat:Wait()
-		dt = math.clamp(tonumber(dt) or (1 / 60), 1 / 240, 0.15)
-		local nextPosition = current + delta.Unit * math.min(speed * dt, delta.Magnitude)
-		root.CFrame = CFrame.lookAt(nextPosition, nextPosition + delta.Unit)
-		StopMotion()
+		if offset.Magnitude <= MOVE_REACH_RADIUS and (root.Position.Y - target.Y) < MOVE_HEIGHT_TOLERANCE then
+			reached = true
+			break
+		end
+		local walkSpeed = math.max(math.min(baseSpeed * runScale, offset.Magnitude / 0.1), 16)
+		humanoid.WalkSpeed = walkSpeed
+		if (os.clock() - closestAt) > MOVE_JUMP_WINDOW and humanoid.FloorMaterial ~= Enum.Material.Air then
+			humanoid.Jump = true
+		end
+		if os.clock() >= nextRefresh then
+			nextRefresh = os.clock() + MOVE_REFRESH_INTERVAL
+			humanoid:MoveTo(Vector3.new(target.X, root.Position.Y, target.Z))
+		end
+		if offset.Magnitude > 0 then
+			root.AssemblyLinearVelocity = (offset.Unit * walkSpeed) + Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
+		end
+		RunService.Heartbeat:Wait()
 	end
-	return false
+	local finishedHumanoid = GetHumanoid()
+	if finishedHumanoid then
+		local rootPart = GetRoot()
+		finishedHumanoid:MoveTo(rootPart and rootPart.Position or target)
+		if finishedHumanoid == humanoid then
+			finishedHumanoid.WalkSpeed = baseSpeed
+		end
+	end
+	local finalRoot = GetRoot()
+	if finalRoot and reached then
+		finalRoot.AssemblyLinearVelocity = Vector3.new(0, finalRoot.AssemblyLinearVelocity.Y, 0)
+	end
+	return reached
 end
 
-function Astron.WalkTo(targetPosition, tolerance, deadlineSeconds)
+local function DropPoint()
+	local separation = SeparationPosition()
+	local root = GetRoot()
+	local z = root and math.clamp(root.Position.Z, CARRY_Z_MIN, CARRY_Z_MAX) or CARRY_Z_CENTER
+	return Vector3.new(separation.X + CARRY_DROP_GAP_X, CARRY_DROP_HEIGHT, z)
+end
+
+local function EntryPoint()
+	local separation = SeparationPosition()
+	return Vector3.new(separation.X + CARRY_ENTRY_GAP_X, CARRY_DROP_HEIGHT, CARRY_ENTRY_Z)
+end
+
+local function CarryPrompt(position)
+	local bestPrompt, bestDistance = nil, GRAB_PROMPT_RADIUS
+	for _, candidate in ipairs(Workspace:GetChildren()) do
+		if candidate.Name == "SmartPromptPart" and candidate:IsA("BasePart") then
+			local prompt = candidate:FindFirstChild("CarryAreaEgg")
+			if prompt then
+				local distance = Vector3.new(
+					candidate.Position.X - position.X,
+					0,
+					candidate.Position.Z - position.Z
+				).Magnitude
+				if distance < bestDistance then
+					bestPrompt, bestDistance = prompt, distance
+				end
+			end
+		end
+	end
+	return bestPrompt
+end
+
+local function RequestCarry(uid)
+	if not EggState or type(EggState.CarryFieldEgg) ~= "function" then
+		return false, "The carry remote is unavailable"
+	end
+	local ok, carried, status = pcall(EggState.CarryFieldEgg, uid)
+	if not ok then
+		return false, tostring(carried)
+	end
+	if carried == true then
+		return true
+	end
+	return false, type(status) == "string" and status or nil
+end
+
+local function DropEgg(uid)
+	if not EggState or type(EggState.DropFieldEgg) ~= "function" then
+		return false
+	end
+	local deadline = os.clock() + DROP_TIMEOUT
+	repeat
+		pcall(EggState.DropFieldEgg, "PlayerRequest")
+		if not IsCarrying(uid) then
+			return true
+		end
+		task.wait(GRAB_POLL_INTERVAL)
+	until os.clock() >= deadline or not Astron.State.Running
+	return not IsCarrying(uid)
+end
+
+local function GrabEgg(uid, position)
+	local deadline = os.clock() + GRAB_TIMEOUT
+	local requests, promptAt = 0, 0
+	local status, statusAt = nil, 0
+	local closerAt, closerDone = nil, false
+	while Astron.State.Running and IsAlive() and os.clock() < deadline do
+		if IsCarrying(uid) then
+			return true
+		end
+		local root = GetRoot()
+		if position and root and (root.Position - position).Magnitude > GRAB_RADIUS then
+			SetRootPosition(position + Vector3.new(0, 3, 0), root.CFrame.Rotation)
+		end
+		if requests < GRAB_MAX_REQUESTS then
+			requests = requests + 1
+			local carried, message = RequestCarry(uid)
+			if carried then
+				return true
+			end
+			if message then
+				status, statusAt = string.lower(message), os.clock()
+			end
+			if position and os.clock() >= promptAt then
+				promptAt = os.clock() + GRAB_PROMPT_INTERVAL
+				local prompt = CarryPrompt(position)
+				if prompt and typeof(fireproximityprompt) == "function" then
+					pcall(function()
+						prompt.HoldDuration = 0
+						fireproximityprompt(prompt)
+					end)
+				end
+			end
+		end
+		if status then
+			if status:find("full") then
+				return false, status:find("pet") and "Pet bag is full" or "Bag is full"
+			end
+			if status:find("unavailable") then
+				local record = ReadFieldEgg(uid)
+				if EggStateName(record) == "GuardCarried" then
+					return false, "Guard is bringing the egg back"
+				end
+				return false, "Egg is gone"
+			end
+			if status:find("already carrying") and not IsCarrying(uid) then
+				DropEgg(uid)
+				status = nil
+			end
+			if status and status:find("closer") then
+				if (os.clock() - statusAt) > GRAB_CLOSER_DELAY then
+					return false, "Could not get close enough"
+				end
+				if not closerDone and position then
+					if closerAt == nil then
+						closerAt = os.clock()
+					elseif (os.clock() - closerAt) > GRAB_CLOSER_SETTLE then
+						closerDone = true
+						local humanoid, current = GetHumanoid(), GetRoot()
+						if humanoid and current then
+							local offset = position - current.Position
+							local flat = Vector3.new(offset.X, 0, offset.Z)
+							local unit = flat.Magnitude > 0.1 and flat.Unit or Vector3.new(1, 0, 0)
+							humanoid:MoveTo(position + unit * GRAB_CLOSER_FAR)
+							task.wait(GRAB_CLOSER_WAIT)
+							humanoid:MoveTo(position + unit * GRAB_CLOSER_NEAR)
+							task.wait(GRAB_CLOSER_WAIT)
+							deadline = deadline + GRAB_CLOSER_EXTRA
+						end
+					end
+				end
+			end
+		end
+		task.wait(GRAB_POLL_INTERVAL)
+	end
+	if IsCarrying(uid) then
+		return true
+	end
+	return false, "Could not grab"
+end
+
+local function CarryWalk(uid, target)
 	local humanoid = GetHumanoid()
 	if not humanoid then
 		return false
 	end
-	local deadline = os.clock() + (deadlineSeconds or 25)
-	local toleranceDistance = tolerance or 6
-	humanoid:MoveTo(targetPosition)
-	while os.clock() < deadline and Astron.State.Running and IsAlive() do
-		local root = GetRoot()
-		if not root then
-			return false
-		end
-		local flatDistance = Vector2.new(
-			targetPosition.X - root.Position.X,
-			targetPosition.Z - root.Position.Z
-		).Magnitude
-		if flatDistance <= toleranceDistance then
-			humanoid:MoveTo(root.Position)
-			StopMotion()
-			return true
-		end
-		task.wait(0.1)
-		humanoid:MoveTo(targetPosition)
-	end
-	humanoid:MoveTo(Vector3.zero)
-	return false
-end
-
-local function MoveToPosition(position)
-	if Astron.Settings.MoveToEgg == "Teleport" then
-		return Astron.TweenTo(position, 3, 20)
-	end
-	return Astron.WalkTo(position, 6, 25)
-end
-
-function Astron.ApproachEgg(candidate)
-	SetStatus("Heading to " .. candidate.Category)
-	local destination = candidate.Position
 	local root = GetRoot()
 	if not root then
 		return false
 	end
-	local groundY = GroundY(destination.X, destination.Z)
-	if groundY then
-		destination = Vector3.new(destination.X, groundY + 3, destination.Z)
-	end
-	if not MoveToPosition(destination) then
-		return false
-	end
-	local liveRecord = ReadFieldEgg(candidate.Uid)
-	local livePosition = liveRecord and EggPosition(liveRecord)
-	if livePosition and (livePosition - (GetRoot() and GetRoot().Position or livePosition)).Magnitude > 8 then
-		return false
-	end
-	return true
-end
-
-function Astron.RequestTargetCarry(candidate)
-	local deadline = os.clock() + 12
-	local tries = 0
-	while os.clock() < deadline and Astron.State.Running do
-		if IsCarriedByMe(candidate.Uid) then
-			return true
-		end
-		local record = ReadFieldEgg(candidate.Uid)
-		if not record then
+	local carryY = root.Position.Y + CARRY_LIFT
+	local scale = DeliveryScale()
+	while Astron.State.Running and IsAlive() and IsCarrying(uid) do
+		root = GetRoot()
+		if not root then
 			return false
 		end
-		if tries < 6 then
-			tries = tries + 1
-			RequestCarry(candidate.Uid)
+		local position = root.Position
+		if position.X - target.X <= CARRY_STOP_DISTANCE then
+			break
 		end
-		task.wait(0.2)
+		if math.abs(position.Y - carryY) > CARRY_LIFT_TOLERANCE then
+			SetRootPosition(Vector3.new(position.X, carryY, position.Z), root.CFrame.Rotation)
+		end
+		local drift = math.clamp((target.Z - position.Z) * CARRY_Z_EASE, -CARRY_Z_EASE_LIMIT, CARRY_Z_EASE_LIMIT)
+		local direction = Vector3.new(-1, 0, drift).Unit
+		root.AssemblyLinearVelocity = direction * humanoid.WalkSpeed * CARRY_WALK_SCALE * scale
+		RunService.Heartbeat:Wait()
 	end
-	return IsCarriedByMe(candidate.Uid)
+	return IsCarrying(uid)
 end
 
-local function CarryLegs(uid, areaId)
-	local target = DropPoint()
+local function CarryFastTween(uid, target, areaId)
 	local root = GetRoot()
 	if not root then
 		return false
 	end
 	local start = root.Position
-	local legCount = LegCount(areaId)
-	local legX = {}
-	for index = 1, legCount - 1 do
-		legX[index] = start.X - ((start.X - target.X) * index / legCount)
+	local legs = LegCount(areaId)
+	local bounds = {}
+	for index = 1, legs - 1 do
+		bounds[index] = start.X - ((start.X - target.X) * index / legs)
 	end
-	local carryY = math.max(start.Y, target.Y)
-	local speed = CarrySpeed()
+	local speed = math.clamp(ToNumber(Astron.Settings.FastTweenSpeed, 3300), 3000, 4500) * DeliveryScale()
 	local legIndex = 1
-	local deadline = os.clock() + 60
-
-	while os.clock() < deadline and Astron.State.Running and IsAlive() do
+	local window = os.clock() + CARRY_TWEEN_WINDOW
+	while Astron.State.Running and IsAlive() and IsCarrying(uid) and os.clock() < window do
 		root = GetRoot()
 		if not root then
 			return false
 		end
-		if not IsCarriedByMe(uid) then
-			return false
-		end
 		local position = root.Position
-		if legX[legIndex] and position.X <= legX[legIndex] then
+		if (target - position).Magnitude <= 1 then
+			break
+		end
+		if bounds[legIndex] and position.X <= bounds[legIndex] then
 			legIndex = legIndex + 1
-			SetCarryCFrame(Vector3.new(position.X, carryY, position.Z))
-			task.wait(0.1)
-			if not DropAndRegrab(uid) then
-				return false
+			SetRootPosition(Vector3.new(position.X, target.Y, position.Z), root.CFrame.Rotation)
+			local settle = os.clock() + CARRY_LEG_WAIT
+			while os.clock() < settle and IsCarrying(uid) and Astron.State.Running do
+				RunService.Heartbeat:Wait()
 			end
-			continue
 		end
-		if position.X - target.X <= CARRY_STOP_DISTANCE then
-			SetCarryCFrame(Vector3.new(target.X, target.Y, target.Z))
-			return true
-		end
-		local dt = RunService.Heartbeat:Wait()
-		dt = math.clamp(tonumber(dt) or (1 / 60), 1 / 240, 0.15)
-		local stepX = math.min(speed * dt, CARRY_FRAME_CAP, position.X - target.X)
-		local nextZ = position.Z + ((target.Z - position.Z) * CARRY_Z_EASE)
-		SetCarryCFrame(Vector3.new(position.X - stepX, carryY, nextZ))
+		local offset = target - position
+		local step = math.min(
+			offset.Magnitude,
+			math.min(speed * math.min(RunService.Heartbeat:Wait(), 0.05), CARRY_FRAME_CAP)
+		)
+		SetRootPosition(position + offset.Unit * step, CARRY_ROTATION)
 	end
-	return false
+	return IsCarrying(uid)
 end
 
-local function CarrySteps(uid)
-	local target = DropPoint()
+local function CarryInstantSteps(uid, target, areaId)
 	local root = GetRoot()
 	if not root then
 		return false
 	end
 	local start = root.Position
 	local steps = math.clamp(ToNumber(Astron.Settings.StepCount, 3), 1, 6)
-	local carryY = math.max(start.Y, target.Y)
-	for index = 1, steps do
-		if not Astron.State.Running or not IsCarriedByMe(uid) then
-			return false
-		end
-		local share = index / steps
-		SetCarryCFrame(Vector3.new(
-			start.X + ((target.X - start.X) * share),
-			carryY,
-			start.Z + ((target.Z - start.Z) * share)
-		))
-		task.wait(0.1)
-		if not DropAndRegrab(uid) then
-			return false
-		end
-		task.wait(0.05)
+	local bounds = {}
+	for index = 1, steps - 1 do
+		bounds[index] = start.X - ((start.X - target.X) * index / steps)
 	end
-	return true
-end
-
-local function CarryWalk(uid)
-	local target = DropPoint()
-	local root = GetRoot()
-	if not root then
-		return false
-	end
-	local humanoid = GetHumanoid()
-	if not humanoid then
-		return false
-	end
-	humanoid:MoveTo(target)
-	local deadline = os.clock() + 60
-	while os.clock() < deadline and Astron.State.Running and IsAlive() do
+	local lifted = start.Y + CARRY_INSTANT_LIFT
+	local stepIndex = 1
+	local length = math.max(WalkSpeedBase() * CARRY_INSTANT_SCALE, CARRY_INSTANT_MIN)
+	while Astron.State.Running and IsAlive() and IsCarrying(uid) do
 		root = GetRoot()
-		if not root or not IsCarriedByMe(uid) then
+		if not root then
 			return false
 		end
-		local flatDistance = Vector2.new(target.X - root.Position.X, target.Z - root.Position.Z).Magnitude
-		if flatDistance <= CARRY_STOP_DISTANCE then
-			humanoid:MoveTo(root.Position)
-			return true
+		local position = root.Position
+		if position.X - target.X <= CARRY_STOP_DISTANCE then
+			break
 		end
-		task.wait(0.1)
-	end
-	return false
-end
-
-local function DepositEgg(uid)
-	local deposit = DepositPoint()
-	local humanoid = GetHumanoid()
-	if not humanoid then
-		return false
-	end
-	SetStatus("Taking the egg inside")
-	humanoid:MoveTo(deposit)
-	local deadline = os.clock() + 15
-	while os.clock() < deadline and Astron.State.Running and IsAlive() do
-		local record = ReadFieldEgg(uid)
-		if not record then
-			return true
-		end
-		local root = GetRoot()
-		if root then
-			local flatDistance = Vector2.new(deposit.X - root.Position.X, deposit.Z - root.Position.Z).Magnitude
-			if flatDistance <= 5 then
-				humanoid:MoveTo(root.Position)
-				StopMotion()
-			else
-				humanoid:MoveTo(deposit)
+		local nextX = position.X - length
+		if bounds[stepIndex] and nextX <= bounds[stepIndex] then
+			nextX = bounds[stepIndex]
+			stepIndex = stepIndex + 1
+			SetRootPosition(Vector3.new(nextX, target.Y, position.Z), root.CFrame.Rotation)
+			local settle = os.clock() + CARRY_INSTANT_WAIT
+			while os.clock() < settle and IsCarrying(uid) and Astron.State.Running do
+				RunService.Heartbeat:Wait()
+			end
+			DropEgg(uid)
+			if IsCarrying(uid) then
+				return false
+			end
+			local regrabbed = GrabEgg(uid, Vector3.new(nextX, target.Y, position.Z))
+			if not regrabbed then
+				return false
+			end
+			length = math.max(WalkSpeedBase() * CARRY_INSTANT_SCALE, CARRY_INSTANT_MIN)
+		else
+			SetRootPosition(Vector3.new(nextX, lifted, position.Z), root.CFrame.Rotation)
+			local settle = os.clock() + CARRY_LEG_WAIT
+			while os.clock() < settle and IsCarrying(uid) and Astron.State.Running do
+				RunService.Heartbeat:Wait()
 			end
 		end
-		task.wait(0.1)
 	end
-	return ReadFieldEgg(uid) == nil
+	return IsCarrying(uid)
 end
 
-local function DropAtPoint(uid)
-	if not IsCarriedByMe(uid) then
-		return false
-	end
-	RequestDrop()
-	local deadline = os.clock() + 1.5
-	while os.clock() < deadline and Astron.State.Running and IsCarriedByMe(uid) do
-		task.wait(0.05)
-	end
-	return not IsCarriedByMe(uid)
-end
-
-local function TakeEggBack(uid)
-	local deadline = os.clock() + 2.5
-	while os.clock() < deadline and Astron.State.Running do
-		if IsCarriedByMe(uid) then
-			return true
+local function EnterSafeZone(uid)
+	local entry = EntryPoint()
+	local deadline = os.clock() + CARRY_ENTRY_TIMEOUT
+	while Astron.State.Running and IsAlive() and os.clock() < deadline do
+		if not IsCarrying(uid) then
+			break
 		end
-		SnapToEgg(uid)
-		RequestCarry(uid)
-		task.wait(0.1)
+		local root = GetRoot()
+		if not root then
+			return false, "Character is unavailable"
+		end
+		local position = root.Position
+		if position.X - entry.X > CARRY_ENTRY_RADIUS then
+			SetRootPosition(
+				Vector3.new(math.max(entry.X, position.X - CARRY_ENTRY_STEP), CARRY_DROP_HEIGHT, CARRY_Z_CENTER),
+				root.CFrame.Rotation
+			)
+		else
+			SetRootPosition(entry, root.CFrame.Rotation)
+		end
+		local settle = os.clock() + CARRY_ENTRY_WAIT
+		while os.clock() < settle and IsCarrying(uid) and Astron.State.Running do
+			RunService.Heartbeat:Wait()
+		end
 	end
-	return IsCarriedByMe(uid)
-end
-
-function Astron.Deliver(uid, areaId)
-	SetStatus("Bringing the egg home")
-	local delivery = Astron.Settings.Delivery
-	local arrived = false
-	if delivery == "Fast Tween" then
-		arrived = CarryLegs(uid, areaId)
-	elseif delivery == "Instant Steps" then
-		arrived = CarrySteps(uid)
-	else
-		arrived = CarryWalk(uid)
+	if IsCarrying(uid) then
+		return false, "Delivery failed"
 	end
-	if not arrived or not Astron.State.Running then
-		return false
+	local record = ReadFieldEgg(uid)
+	if EggStateName(record) == "Slot" then
+		return false, "Egg went back to its nest"
 	end
-	if not DropAtPoint(uid) then
-		return false
-	end
-	if Astron.Settings.DropAtSafeZone then
-		SetStatus("Egg left in front of the safe zone")
-		return true
-	end
-	if not TakeEggBack(uid) then
-		return false
-	end
-	return DepositEgg(uid)
+	return true
 end
 
 local function PruneSkipped()
@@ -6493,11 +6575,71 @@ local function PruneSkipped()
 	end
 end
 
+function Astron.ApproachEgg(candidate)
+	local target = candidate.Position
+	local groundY = GroundY(target.X, target.Z)
+	if groundY then
+		target = Vector3.new(target.X, groundY + 3, target.Z)
+	end
+	SetStatus("Heading to " .. candidate.Category)
+	if Astron.Settings.MoveToEgg == "Teleport" then
+		return SetRootPosition(target, RootRotation())
+	end
+	return MoveToPoint(target)
+end
+
+function Astron.Deliver(uid, areaId)
+	SetStatus("Bringing the egg home")
+	local target = DropPoint()
+	local mode = Astron.Settings.Delivery
+	local carried
+	if mode == "Instant Steps" then
+		carried = CarryInstantSteps(uid, target, areaId)
+	elseif mode == "Fast Tween" then
+		carried = CarryFastTween(uid, target, areaId)
+	else
+		carried = CarryWalk(uid, target)
+	end
+	if not carried then
+		return false, "Dropped on the way"
+	end
+	SetStatus("Dropping the egg at the safe zone")
+	if not DropEgg(uid) then
+		return false, "Could not drop"
+	end
+	if Astron.Settings.DropAtSafeZone then
+		SetStatus("Egg left at the safe zone")
+		return true
+	end
+	local eggPosition = nil
+	local confirm = os.clock() + DROP_CONFIRM_TIMEOUT
+	while os.clock() < confirm and Astron.State.Running do
+		local record = ReadFieldEgg(uid)
+		if EggStateName(record) == "Dropped" then
+			local pivot = record.BottomCFrame
+			if typeof(pivot) == "CFrame" then
+				eggPosition = pivot.Position + Vector3.new(0, 3, 0)
+			end
+			break
+		end
+		task.wait(GRAB_POLL_INTERVAL)
+	end
+	local root = GetRoot()
+	if root then
+		SetRootPosition(eggPosition or (root.Position + Vector3.new(0, 3, 0)), root.CFrame.Rotation)
+	end
+	local grabbed, message = GrabEgg(uid, eggPosition and (eggPosition - Vector3.new(0, 3, 0)) or nil)
+	if not grabbed then
+		return false, message or "Could not grab the egg back"
+	end
+	SetStatus("Walking the egg in")
+	return EnterSafeZone(uid)
+end
+
 function Astron.StealOnce()
 	PruneSkipped()
-	local candidates = Astron.CollectCandidates()
 	local candidate = nil
-	for _, entry in ipairs(candidates) do
+	for _, entry in ipairs(Astron.CollectCandidates()) do
 		if not Astron.State.Skipped[entry.Uid] then
 			candidate = entry
 			break
@@ -6509,24 +6651,26 @@ function Astron.StealOnce()
 	end
 	Astron.State.TargetUid = candidate.Uid
 	Astron.State.TargetName = candidate.Category
-
 	if not Astron.ApproachEgg(candidate) then
-		Astron.State.Skipped[candidate.Uid] = os.clock() + 20
+		Astron.State.Skipped[candidate.Uid] = os.clock() + SKIP_SECONDS
 		SetStatus("Could not reach the egg")
 		return false
 	end
-	if not Astron.RequestTargetCarry(candidate) then
-		Astron.State.Skipped[candidate.Uid] = os.clock() + 20
-		SetStatus("Carry refused")
+	local grabbed, grabMessage = GrabEgg(candidate.Uid, candidate.Position)
+	if not grabbed then
+		Astron.State.Skipped[candidate.Uid] = os.clock() + SKIP_SECONDS
+		SetStatus(grabMessage or "Could not grab")
 		return false
 	end
-
-	local delivered = Astron.Deliver(candidate.Uid, candidate.AreaId)
+	SetStatus("Carrying " .. candidate.Category)
+	local delivered, deliverMessage = Astron.Deliver(candidate.Uid, candidate.AreaId)
 	Astron.State.TargetUid = nil
 	if delivered then
 		SetStatus("Delivered " .. candidate.Category)
+		return true
 	end
-	return delivered
+	SetStatus(deliverMessage or "Delivery failed")
+	return false
 end
 
 function Astron.Start()
@@ -6628,6 +6772,7 @@ function Astron.BuildUI()
 end
 
 BuildCatalog()
+TrackCarry()
 Astron.BuildUI()
 SetStatus("Idle")
 
