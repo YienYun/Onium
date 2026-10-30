@@ -308,17 +308,20 @@ local FarmConfig = {
 	AutoStealEnabled = false,
 	AutoStealAll = false,
 	StealAllMode = false,
-	StealMethod = "Teleport",
 	SafeZoneVisual = false,
 	Defense_AntiRagdoll = true,
 	TweenSpeed = 600,
 	AutoTweenSpeed = 400,
 	FastTweenSpeed = 3300,
-	DeliveryMethod = "Fast Tween V2",
+	DeliveryMethod = "Fast Tween",
 	DeliverySteps = 3,
+	DeliverySpeed = 100,
+	StealMinValue = 0,
+	StealMissingIndex = false,
+	DropAtSafeZone = false,
+	MinRarityRank = 1,
 	SelectedZones = {},
 	SelectedEggs = {},
-	SelectedRarities = {},
 	Progression_AutoBuyTrail = false,
 	Progression_AutoUpgradeBase = false,
 	Progression_AutoUpgradeTreadmill = false,
@@ -491,21 +494,21 @@ local StealPriorityOptions = {
 	"Lowest Value",
 }
 
-local StealMethodOptions = {
+local MoveToEggOptions = {
 	"Walk",
 	"Teleport",
 }
 
+local DeliveryFast = "Fast Tween"
 local DeliveryFastV1 = "Fast Tween V1"
-local DeliveryFastV2 = "Fast Tween V2"
 local DeliveryInstantSteps = "Instant Steps"
 local DeliveryWalk = "Walk"
 
 local DeliveryMethodOptions = {
-	DeliveryFastV1,
-	DeliveryFastV2,
-	DeliveryInstantSteps,
 	DeliveryWalk,
+	DeliveryInstantSteps,
+	DeliveryFast,
+	DeliveryFastV1,
 }
 
 local PlaceRuleOptions = {
@@ -2042,25 +2045,79 @@ function Engine.CollectRawFieldEggs(forceRefresh)
 	return collectedList
 end
 
+local StealIndex = { Owned = nil, At = 0 }
+
+function StealIndex.Snapshot()
+	local readerFn = type(SaveModule) == "table"
+		and ((type(SaveModule.Get) == "function" and SaveModule.Get) or (type(SaveModule.Peek) == "function" and SaveModule.Peek))
+	if not readerFn then
+		return nil
+	end
+	local callOk, saveTable = pcall(readerFn)
+	return (callOk and type(saveTable) == "table") and saveTable or nil
+end
+
+function StealIndex.ReadOwned()
+	local now = os.clock()
+	if now - StealIndex.At < 5 and StealIndex.Owned then
+		return StealIndex.Owned
+	end
+	StealIndex.At = now
+	local saveTable = StealIndex.Snapshot()
+	if not saveTable then
+		StealIndex.Owned = nil
+		return nil
+	end
+
+	local owned = {}
+	for _, sectionKey in ipairs({ "Index", "Inventory", "EggInventory" }) do
+		local section = saveTable[sectionKey]
+		if type(section) == "table" then
+			for entryKey, entryValue in pairs(section) do
+				if type(entryValue) == "table" then
+					local categoryName = entryValue.Category or entryValue.AssetCategory
+					if type(categoryName) == "string" and categoryName ~= "" then
+						owned[string.lower(categoryName)] = true
+					end
+				elseif type(entryKey) == "string" then
+					owned[string.lower(entryKey)] = true
+				end
+			end
+		end
+	end
+	StealIndex.Owned = next(owned) and owned or nil
+	return StealIndex.Owned
+end
+
+function StealIndex.IsMissing(categoryName)
+	local owned = StealIndex.ReadOwned()
+	if not owned then
+		return true
+	end
+	return not owned[string.lower(categoryName)]
+end
+
+function StealIndex.Passes(categoryName, rarityRank, incomeValue)
+	local minRank = ToFiniteNumber(FarmConfig.MinRarityRank, 1)
+	if minRank > 1 and rarityRank < minRank then
+		return false
+	end
+	local minValue = ToFiniteNumber(FarmConfig.StealMinValue, 0)
+	if minValue > 0 and incomeValue < minValue then
+		return false
+	end
+	if FarmConfig.StealMissingIndex and not StealIndex.IsMissing(categoryName) then
+		return false
+	end
+	return true
+end
+
 local function MatchesSelectedFilters(zoneName, categoryName, rarityName)
 	if next(FarmConfig.SelectedZones) ~= nil and not FarmConfig.SelectedZones[string.lower(zoneName)] then
 		return false
 	end
 	if next(FarmConfig.SelectedEggs) ~= nil and not FarmConfig.SelectedEggs[string.lower(categoryName)] then
 		return false
-	end
-	if next(FarmConfig.SelectedRarities) ~= nil then
-		local targetRarityKey = NormalizeRarityKey(rarityName)
-		local rarityMatched = false
-		for selectedRarity in pairs(FarmConfig.SelectedRarities) do
-			if NormalizeRarityKey(selectedRarity) == targetRarityKey then
-				rarityMatched = true
-				break
-			end
-		end
-		if not rarityMatched then
-			return false
-		end
 	end
 	return true
 end
@@ -2121,8 +2178,10 @@ function Engine.CollectCandidates(includeCarried, isNormalMode)
 		local zoneName = ResolveEggZone(eggRecord.AreaId, eggPos, categoryName)
 		local rarityName, rarityRank = ResolveEggRarity(eggRecord)
 
-		if MatchesSelectedFilters(zoneName, categoryName, rarityName) then
-			local incomeRate = CalculateEggIncome(eggRecord)
+		local incomeRate = CalculateEggIncome(eggRecord)
+		if MatchesSelectedFilters(zoneName, categoryName, rarityName)
+			and StealIndex.Passes(categoryName, rarityRank, incomeRate)
+		then
 			local weightKg = GetEggWeightKg(eggRecord)
 			local distanceStuds = ToFiniteNumber((playerPos - eggPos).Magnitude, 0)
 
@@ -3347,7 +3406,8 @@ do
 			legPositionsX[index] = startPos.X - ((startPos.X - targetPos.X) * index / legCount)
 		end
 
-		local carrySpeed = math.clamp(tonumber(FarmConfig.FastTweenSpeed) or 3300, 800, 8000)
+		local speedScale = math.clamp(tonumber(FarmConfig.DeliverySpeed) or 100, 80, 110) / 100
+		local carrySpeed = math.clamp(tonumber(FarmConfig.FastTweenSpeed) or 3300, 800, 8000) * speedScale
 		local carryY = math.max(startPos.Y, targetPos.Y)
 		local legIndex = 1
 		local carryDeadline = os.clock() + 60
@@ -3420,7 +3480,7 @@ do
 			local dropTarget = GetDropPoint(cycle)
 			if (cycle.Root.Position - dropTarget.Position).Magnitude > CARRY_STOP_DISTANCE then
 				local delivery = FarmConfig.DeliveryMethod
-				if delivery == DeliveryFastV2 then
+				if delivery == DeliveryFast then
 					CarryHome(cycle, eggUid, dropTarget)
 				elseif delivery == DeliveryInstantSteps then
 					CarrySteps(cycle, eggUid, dropTarget)
@@ -3492,6 +3552,12 @@ do
 			cycle.DeliveryDropUid = nil
 			if not IsCycleCurrent(cycle) then
 				return false
+			end
+
+			if FarmConfig.DropAtSafeZone then
+				SetCycleStatus(cycle, "Egg dropped in front of the safe zone")
+				Engine.RecordAutoTrace("delivery-drop-at-safe-zone", eggUid)
+				return true
 			end
 
 			local regrabDestination = droppedPosition and CFrame.new(droppedPosition + Vector3.new(0, 3, 0)) * CARRY_ROTATION
@@ -13159,67 +13225,37 @@ local function ApplyCatalogSelection(targetMap, selectedValues)
 end
 
 function Hub.Features.BuildFarmEggs(farmGroup)
-	local targetZoneDropdown = farmGroup:AddDropdown("Dropdown_TargetZone", {
-		Text = "Zone",
-		Values = AreaNamesList,
-		Multi = true,
-		Searchable = true,
-		Callback = function(selectedValues)
-			ApplySelectionTable(FarmConfig.SelectedZones, selectedValues)
-		end,
-	})
+	local rarityMinOptions = { "Any" }
+	for rankIndex, rarityName in ipairs(RaritiesList) do
+		table.insert(rarityMinOptions, rankIndex .. " - " .. rarityName)
+	end
 
-	local targetEggDropdown = farmGroup:AddDropdown("Dropdown_TargetEgg", {
-		Text = "Egg",
-		Values = EggNamesList,
-		Multi = true,
-		Searchable = true,
-		Callback = function(selectedValues)
-			ApplySelectionTable(FarmConfig.SelectedEggs, selectedValues)
-		end,
-	})
+	local eggLabelOptions, eggLabelToCategory = {}, {}
+	for _, eggName in ipairs(EggNamesList) do
+		local assetInfo = AssetInfoByLowerName[string.lower(eggName)]
+		local rarityName = (assetInfo and assetInfo.Rarity) or "Egg"
+		local optionLabel = eggName .. " [" .. rarityName .. "]"
+		table.insert(eggLabelOptions, optionLabel)
+		eggLabelToCategory[optionLabel] = eggName
+	end
 
-	local targetRarityDropdown = farmGroup:AddDropdown("Dropdown_TargetRarity", {
-		Text = "Rarity",
-		Values = RaritiesList,
-		Multi = true,
-		Searchable = true,
-		Callback = function(selectedValues)
-			ApplySelectionTable(FarmConfig.SelectedRarities, selectedValues)
-		end,
-	})
-
-	Hub.UI.Dropdowns.FarmZones = targetZoneDropdown
-	Hub.UI.Dropdowns.FarmEggs = targetEggDropdown
-	Hub.UI.Dropdowns.FarmRarities = targetRarityDropdown
-
-	farmGroup:AddDropdown("Dropdown_StealPriority", {
-		Text = "Steal Priority",
-		Values = StealPriorityOptions,
-		Default = 4,
-		Callback = function(selectedPriority)
-			if type(selectedPriority) == "string" and selectedPriority ~= "" then
-				Engine.State.Priority = selectedPriority
-			end
-		end,
-	})
-
-	farmGroup:AddDropdown("Dropdown_StealMethod", {
-		Text = "Steal Method",
-		Values = StealMethodOptions,
-		Default = 2,
-		Callback = function(selectedMethod)
-			if selectedMethod == "Walk" or selectedMethod == "Teleport" then
-				FarmConfig.StealMethod = selectedMethod
+	farmGroup:AddDropdown("Dropdown_MoveToEgg", {
+		Text = "Move To Egg",
+		Values = MoveToEggOptions,
+		Default = 1,
+		Tooltip = "How the character travels to the target egg. Teleport is not implemented yet",
+		Callback = function(selectedMode)
+			if selectedMode == "Walk" or selectedMode == "Teleport" then
+				FarmConfig.MoveToEgg = selectedMode
 			end
 		end,
 	})
 
 	farmGroup:AddDropdown("Dropdown_DeliveryMethod", {
-		Text = "Delivery Method",
+		Text = "Delivery",
 		Values = DeliveryMethodOptions,
-		Default = 2,
-		Tooltip = "How the carried egg is brought back: fast tween (V1 or V2), instant steps, or on foot",
+		Default = 3,
+		Tooltip = "How the carried egg is brought home: on foot, instant steps, fast tween or fast tween V1",
 		Callback = function(selectedDelivery)
 			for _, option in ipairs(DeliveryMethodOptions) do
 				if selectedDelivery == option then
@@ -13230,13 +13266,26 @@ function Hub.Features.BuildFarmEggs(farmGroup)
 		end,
 	})
 
+	farmGroup:AddSlider("Slider_DeliverySpeed", {
+		Text = "Delivery Speed",
+		Min = 80,
+		Max = 110,
+		Default = 100,
+		Rounding = 0,
+		Suffix = "%",
+		Tooltip = "Carry speed multiplier for the fast tween and instant steps delivery",
+		Callback = function(sliderVal)
+			FarmConfig.DeliverySpeed = math.clamp(ToFiniteNumber(sliderVal, 100), 80, 110)
+		end,
+	})
+
 	farmGroup:AddSlider("Slider_DeliverySteps", {
 		Text = "Step Count",
 		Min = 1,
 		Max = 6,
 		Default = 3,
 		Rounding = 0,
-		Tooltip = "Number of steps used by Instant Steps delivery",
+		Tooltip = "Number of jumps used by Instant Steps delivery",
 		Callback = function(sliderVal)
 			FarmConfig.DeliverySteps = math.clamp(ToFiniteNumber(sliderVal, 3), 1, 6)
 		end,
@@ -13249,10 +13298,97 @@ function Hub.Features.BuildFarmEggs(farmGroup)
 		Default = 3300,
 		Rounding = 0,
 		Suffix = " st/s",
+		Tooltip = "Studs per second while carrying the egg with fast tween",
 		Callback = function(sliderVal)
 			FarmConfig.FastTweenSpeed = math.clamp(ToFiniteNumber(sliderVal, 3300), 3000, 4500)
 		end,
 	})
+
+	farmGroup:AddDropdown("Dropdown_StealPriority", {
+		Text = "Steal Priority",
+		Values = StealPriorityOptions,
+		Default = 4,
+		Callback = function(selectedPriority)
+			if type(selectedPriority) == "string" and selectedPriority ~= "" then
+				Engine.State.Priority = selectedPriority
+			end
+		end,
+	})
+
+	local targetZoneDropdown = farmGroup:AddDropdown("Dropdown_TargetZone", {
+		Text = "Target Areas",
+		Values = AreaNamesList,
+		Multi = true,
+		Searchable = true,
+		Callback = function(selectedValues)
+			ApplySelectionTable(FarmConfig.SelectedZones, selectedValues)
+		end,
+	})
+
+	local targetRarityDropdown = farmGroup:AddDropdown("Dropdown_MinRarity", {
+		Text = "Min Rarity",
+		Values = rarityMinOptions,
+		Default = 1,
+		Searchable = true,
+		Callback = function(selectedRarity)
+			local rankValue = tonumber(tostring(selectedRarity or ""):match("^(%d+)")) or 1
+			FarmConfig.MinRarityRank = math.clamp(rankValue, 1, #RaritiesList)
+		end,
+	})
+
+	farmGroup:AddSlider("Slider_Steal_MinValue", {
+		Text = "Min Steal Value",
+		Min = 0,
+		Max = 1000,
+		Default = 0,
+		Rounding = 0,
+		Suffix = "M/s",
+		Tooltip = "Skip eggs worth less than this income (0 = off)",
+		Callback = function(sliderVal)
+			local numericVal = ToFiniteNumber(sliderVal, 0)
+			FarmConfig.StealMinValue = (numericVal > 0) and (numericVal * 1000000) or 0
+		end,
+	})
+
+	local targetEggDropdown = farmGroup:AddDropdown("Dropdown_TargetEgg", {
+		Text = "Target Specific Eggs",
+		Values = eggLabelOptions,
+		Multi = true,
+		Searchable = true,
+		Callback = function(selectedValues)
+			table.clear(FarmConfig.SelectedEggs)
+			if type(selectedValues) == "table" then
+				for optionLabel, isPicked in pairs(selectedValues) do
+					if isPicked then
+						local categoryName = eggLabelToCategory[optionLabel] or tostring(optionLabel)
+						FarmConfig.SelectedEggs[string.lower(categoryName)] = true
+					end
+				end
+			end
+		end,
+	})
+
+	farmGroup:AddToggle("Toggle_Steal_MissingIndex", {
+		Text = "Steal Missing Index Eggs",
+		Default = false,
+		Tooltip = "Only steal eggs that are still missing from your collection index",
+		Callback = function(isEnabled)
+			FarmConfig.StealMissingIndex = isEnabled
+		end,
+	})
+
+	farmGroup:AddToggle("Toggle_Steal_DropAtSafeZone", {
+		Text = "Drop Eggs At Safe Zone",
+		Default = false,
+		Tooltip = "WARNING: eggs are dropped in front of the safe zone, they will NOT be taken into your base",
+		Callback = function(isEnabled)
+			FarmConfig.DropAtSafeZone = isEnabled
+		end,
+	})
+
+	Hub.UI.Dropdowns.FarmZones = targetZoneDropdown
+	Hub.UI.Dropdowns.FarmEggs = targetEggDropdown
+	Hub.UI.Dropdowns.FarmRarities = targetRarityDropdown
 
 	-- Purple-Pink (#D946EF) prefix "Status:" + normal UI color answer text
 	local stealStatusRow = Hub.Theme.CreateStatusLabel(farmGroup, "Status", "Idle")

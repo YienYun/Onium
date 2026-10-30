@@ -237,7 +237,7 @@ local function StealSignature()
 	end
 	return string.format(
 		"%s|%s|%s",
-		SortedKeys(config.SelectedRarities),
+			tostring(config.MinRarityRank or 1),
 		SortedKeys(config.SelectedZones),
 		SortedKeys(config.SelectedEggs)
 	)
@@ -249,8 +249,10 @@ local function ApplyRarityToStealFilter()
 	if not dropdowns or not dropdowns.FarmRarities then
 		return
 	end
-	local rarityLabel = EggFinder.MinRarity > 0 and RarityLabelForRank(EggFinder.MinRarity) or "Any"
-	dropdowns.FarmRarities:SetValue(rarityLabel ~= "Any" and { [rarityLabel] = true } or {})
+	local rarityLabel = EggFinder.MinRarity > 1
+			and (EggFinder.MinRarity .. " - " .. RarityLabelForRank(EggFinder.MinRarity))
+		or "Any"
+	dropdowns.FarmRarities:SetValue(rarityLabel)
 end
 
 local function PushToSteal()
@@ -279,14 +281,8 @@ local function PullFromSteal()
 	end
 	EggFinder.Applying = true
 
-	local rarityRank = 0
-	for rarityKey in pairs(config.SelectedRarities or {}) do
-		local rankValue = ToNumber(catalog.RarityRankByKey[catalog.NormalizeRarityKey(rarityKey)], 0)
-		if rankValue > 0 and (rarityRank == 0 or rankValue < rarityRank) then
-			rarityRank = rankValue
-		end
-	end
-	EggFinder.MinRarity = rarityRank
+	local rarityRank = ToNumber(config.MinRarityRank, 1)
+	EggFinder.MinRarity = rarityRank > 1 and rarityRank or 0
 
 	local areas = {}
 	for areaKey in pairs(config.SelectedZones or {}) do
