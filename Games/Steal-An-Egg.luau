@@ -1669,14 +1669,18 @@ function Engine.WallSealed()
 	return false
 end
 
-function Engine.GetSeparationX()
+function Engine.GetSeparationPosition()
 	local worldFolder = Workspace:FindFirstChild("World") or Workspace:FindFirstChild("__OBJECTS")
 	local areasFolder = worldFolder and worldFolder:FindFirstChild("Areas")
 	local sepPart = areasFolder and areasFolder:FindFirstChild("SeparationLine")
 	if sepPart and sepPart:IsA("BasePart") then
-		return sepPart.Position.X
+		return sepPart.Position
 	end
-	return SAFE_BASE_LINE_X
+	return Vector3.new(SAFE_BASE_LINE_X, 0, 0)
+end
+
+function Engine.GetSeparationX()
+	return Engine.GetSeparationPosition().X
 end
 
 function Engine.InsideBase(checkPos)
@@ -2514,14 +2518,18 @@ do
 		return CFrame.new(safePosition.X, standY, safePosition.Z) * cycle.Root.CFrame.Rotation
 	end
 
-	local DROP_GAP = 12
+	local DROP_GAP = 13.8
+	local DROP_LINE_OFFSET = 1.3
+	local DROP_HEIGHT = 3.35
 	local CARRY_ROTATION = CFrame.Angles(0, math.pi / 2, 0)
 
 	local function GetDropPoint(cycle)
-		local dropX = Engine.GetSeparationX() + DROP_GAP
-		local groundY = ProbeGroundY(cycle, dropX, safePosition.Z)
-		local standY = groundY and (groundY + 3.2) or deliveryDrop.Position.Y
-		return CFrame.new(dropX, standY, safePosition.Z) * CARRY_ROTATION
+		local sepPos = Engine.GetSeparationPosition()
+		local dropX = sepPos.X + DROP_GAP
+		local dropZ = SAFE_CORRIDOR_Z - DROP_LINE_OFFSET
+		local groundY = ProbeGroundY(cycle, dropX, dropZ)
+		local standY = groundY and (groundY + 3.2) or (sepPos.Y + DROP_HEIGHT)
+		return CFrame.new(dropX, standY, dropZ) * CARRY_ROTATION
 	end
 
 	local function IsInSafeArea(cycle)
